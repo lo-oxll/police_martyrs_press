@@ -172,10 +172,10 @@ const TOPMENU = [
 window.TOPMENU = TOPMENU;
 
 // ── تعريف الصفحات والقائمة الجانبية ──────────────────────────────
-// القائمة الجانبية اليمنى تقتصر حصراً على العناصر المطلوبة، بلا تكرار: كل ميزة تظهر
-// مرة واحدة فقط بأحدث تسمية لها (مثال: "سند قيد مركب" و"يومية مركبة" هما نفس ميزة
-// القيد المحاسبي المركب — أُبقي على تسمية واحدة فقط وحُذفت الأخرى المكررة).
 const PAGES = [
+  { section: 'عام', items: [
+    { id: 'dashboard', label: 'لوحة التحكم', icon: '📊' },
+  ]},
   { section: 'الحركة اليومية', items: [
     { id: 'receive', label: 'ادخال فواتير', icon: '📥', roles: ['admin','accountant'] },
     { id: 'issue', label: 'اخراج فواتير', icon: '📤', roles: ['admin','accountant'] },
@@ -183,6 +183,10 @@ const PAGES = [
     { id: 'balance', label: 'جرد مستودع', icon: '⚖️' },
     { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
     { id: 'docs', label: 'كشف الحركة اليومية', icon: '📑' },
+    { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
+    { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant'] },
+    { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
+    { id: 'physcount', label: 'الجرد الدوري', icon: '🧮', roles: ['admin','accountant','manager'] },
     { id: 'cashbox', label: 'ادخال وتعديل يومية صندوق', icon: '💰', roles: ['admin','accountant'], check: canTreasury },
     { id: 'receiptsvouchers', label: 'ادخال وتعديل إيصال قبض', icon: '🧾', roles: ['admin','accountant'] },
     { id: 'accountstatement', label: 'كشف الحساب', icon: '📄' },
@@ -191,6 +195,15 @@ const PAGES = [
     { id: 'paymentreceiptorders', label: 'ادخال وتعديل أمر صرف', icon: '📤', roles: ['admin','accountant'] },
     { id: 'receiptorders', label: 'ادخال وتعديل أمر قبض', icon: '📥', roles: ['admin','accountant'] },
     { id: 'materialinquiry', label: 'الاستعلام عن مادة', icon: '🔎' },
+    { id: 'fixedassets', label: 'الأصول الثابتة', icon: '🏢', roles: ['admin','accountant','manager','auditor'] },
+    { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'pettycash', label: 'سندات الصرف (السلفة المستديمة)', icon: '🧾', roles: ['admin','manager','auditor','accountant'] },
+    { id: 'pettycashfund', label: 'قائمة السلفة المستديمة', icon: '📒', roles: ['admin','manager','auditor','accountant'] },
+    { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
+    { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
+    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
   ]},
 ];
 
