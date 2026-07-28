@@ -57,26 +57,150 @@ function scopedWarehouses(all) {
 }
 window.scopedWarehouses = scopedWarehouses;
 
+// ══════════════════════════════════════════════════════════════════
+//  القائمة العلوية (Mega Menu) — المرحلة ١: هيكل تنقّل كامل
+//  كل عنصر: { id, label, page? , action? }. page = معرّف صفحة مسجّلة أو
+//  ستُنشأ تلقائياً كصفحة "قيد الإنشاء" إن لم توجد. action = دالة تُنفَّذ مباشرة (بدون تنقّل).
+// ══════════════════════════════════════════════════════════════════
+const TOPMENU = [
+  { id: 'cards', label: 'فتح بطاقات', icon: '🗂', items: [
+    { label: 'فتح وتعديل بطاقة حساب', page: 'coa' },
+    { label: 'فتح وتعديل بطاقة صنف رئيسي', page: 'matcategory' },
+    { label: 'فتح وتعديل بطاقة زبون', page: 'customers' },
+    { label: 'فتح وتعديل بطاقة مادة', page: 'materials' },
+    { label: 'فتح وتعديل بطاقة مستودع', page: 'warehouses' },
+    { label: 'توليد بطاقات مواد بشكل جماعي', page: 'materialbulkgen' },
+    { label: 'فتح وتعديل بطاقة تشابه مواد', page: 'materialsimilar' },
+    { label: 'فتح وتعديل بطاقة عملة', page: 'currencies' },
+    { label: 'فتح وتعديل بطاقة مشروع', page: 'projects' },
+    { label: 'تعريف المناطق والشوارع', page: 'regions' },
+    { label: 'ادخال وتعديل بطاقة فرع', page: 'branches' },
+  ]},
+  { id: 'acctmove', label: 'ادخال الحركات المحاسبية', icon: '🧾', items: [
+    { label: 'القيود المحاسبية', page: 'journal' },
+    { label: 'إيصالات القبض والدفع', page: 'receiptsvouchers' },
+    { label: 'أوامر القبض والدفع', page: 'paymentreceiptorders' },
+    { label: 'سندات الديون', page: 'debtnotes' },
+    { label: 'الموازنة التقديرية', page: 'budget' },
+  ]},
+  { id: 'acctreports', label: 'تقارير محاسبة', icon: '📈', items: [
+    { label: 'كشف الحساب', page: 'accountstatement' },
+    { label: 'كشوفات تفصيلية', page: 'detailedstatements' },
+    { label: 'كشوفات اجمالية', page: 'summarystatements' },
+    { label: 'تقارير سندات الديون', page: 'debtnotereports' },
+    { label: 'دليل الحسابات', page: 'coa' },
+    { label: 'دليل مراكز الكلفة', page: 'costcenters' },
+    { label: 'كشوفات الأصول والموازنة', page: 'assetsbudgetstatements' },
+    { label: 'كشوفات ختامية', page: 'reports' },
+  ]},
+  { id: 'matmove', label: 'ادخال حركة المواد', icon: '📦', items: [
+    { label: 'ادخال فواتير', page: 'receive' },
+    { label: 'طلبيات البيع والشراء', page: 'salespurchaseorders' },
+    { label: 'المناقلات بين المستودعات', page: 'transfer' },
+    { label: 'فواتير الجرد', page: 'physcount' },
+    { label: 'اخراج فواتير', page: 'issue' },
+    { label: 'يومية مبيعات', page: 'salesjournal' },
+    { label: 'ادخال وتعديل ايصالات الشحن', page: 'shippingreceipts' },
+  ]},
+  { id: 'whreports', label: 'تقارير مستودعية', icon: '📊', items: [
+    { label: 'كشف الفواتير', page: 'docs' },
+    { label: 'كشف حركة مادة', page: 'materialmovement' },
+    { label: 'جرد مستودع', page: 'balance' },
+    { label: 'كشف اجمالى لمستودع', page: 'warehousesummary' },
+    { label: 'جرد مستودع بالأرقام التسلسلية', page: 'serialcount' },
+    { label: 'كشف يومية مستودع', page: 'whdaily' },
+    { label: 'ملخص الحركة المستودعية', page: 'whmovementsummary' },
+    { label: 'كشف يومية مستودع موسع', page: 'whdailyext' },
+    { label: 'كشف تحليلي للمبيعات والمشتريات', page: 'salespurchaseanalytical' },
+    { label: 'كشف تجميعي للمبيعات والمشتريات', page: 'salespurchaseaggregate' },
+    { label: 'كشف احصائي للمبيعات والمشتريات', page: 'salespurchasestats' },
+    { label: 'كشف تفصيلي للمستودعات', page: 'whdetailed' },
+    { label: 'كشف ايصالات الشحن', page: 'shippingreceiptsreport' },
+    { label: 'دليل المواد', page: 'materials' },
+    { label: 'الاستعلام عن مادة', page: 'materialinquiry' },
+    { label: 'الاستعلام عن باركود', page: 'barcodeinquiry' },
+    { label: 'كشف الفواتير المستحقة', page: 'duedocs' },
+    { label: 'متابعة المشتريات', page: 'purchasetracking' },
+    { label: 'ملخص يومية المندوبين', page: 'repsdailysummary' },
+    { label: 'متابعة المبيعات اليومية', page: 'salesdailytracking' },
+    { label: 'كشف توفر المواد حسب الصلاحية', page: 'expiryavailability' },
+    { label: 'كشف تدفقات المخزون', page: 'stockflow' },
+    { label: 'كشف المتجر', page: 'storestatement' },
+    { label: 'كشف يومية المطعم', page: 'restaurantdaily' },
+  ]},
+  { id: 'attachments', label: 'الملحقات', icon: '📎', items: [
+    { label: 'العقود', page: 'contracts' },
+    { label: 'الأرشيف', page: 'archive' },
+    { label: 'الأعمال والمهام', page: 'tasks' },
+    { label: 'التأجير', page: 'rental' },
+  ]},
+  { id: 'manufacturing', label: 'التصنيع', icon: '🏭', items: [
+    { label: 'ادخال وتعديل نموذج تصنيع', page: 'mfgmodel' },
+    { label: 'ادخال وتعديل طلبية تصنيع', page: 'mfgorder' },
+    { label: 'ادخال وتعديل عملية تصنيع', page: 'mfgprocess' },
+    { label: 'توزيع نفقات غير مباشرة', page: 'indirectexpenses' },
+    { label: 'كشف التصنيع واحتياجاته', page: 'mfgreport' },
+    { label: 'كشف انحراف التصنيع', page: 'mfgdeviation' },
+    { label: 'جرد المواد والمكونات', page: 'mfgcomponentscount' },
+  ]},
+  { id: 'services', label: 'خدمات', icon: '🛎', items: [
+    { label: 'ادخال وتعديل نموذج تصنيع', page: 'mfgmodel' },
+    { label: 'ادخال وتعديل طلبية تصنيع', page: 'mfgorder' },
+    { label: 'ادخال وتعديل عملية تصنيع', page: 'mfgprocess' },
+    { label: 'توزيع نفقات غير مباشرة', page: 'indirectexpenses' },
+    { label: 'كشف التصنيع واحتياجاته', page: 'mfgreport' },
+    { label: 'كشف انحراف التصنيع', page: 'mfgdeviation' },
+    { label: 'جرد المواد والمكونات', page: 'mfgcomponentscount' },
+  ]},
+  { id: 'settings', label: 'اعدادات البرنامج', icon: '⚙️', items: [
+    { label: 'آلة حاسبة', action: 'openCalculator' },
+    { label: 'الرقابة', page: 'auditlog' },
+    { label: 'البريد الداخلي', page: 'internalmail' },
+    { label: 'أرشفة الوثائق', page: 'docarchiving' },
+    { label: 'صيانة الملفات', page: 'filemaintenance' },
+    { label: 'تصميم وطباعة الباركود', page: 'barcodedesign' },
+    { label: 'نسخ بيانات من والى فرع شركة آخر', page: 'branchsync' },
+    { label: 'خدمات متفرقة', page: 'miscservices' },
+    { label: 'خدمات المزامنة', page: 'syncservices' },
+    { label: 'الاستيراد من اكسل', page: 'excelimport' },
+    { label: 'English', action: 'toggleLanguage' },
+    { label: 'حول البرنامج', page: 'about' },
+    { label: 'تحديث الاتصال بالشبكة', page: 'networksettings' },
+  ]},
+  { id: 'exit', label: 'خروج', icon: '🚪', action: 'doLogout' },
+];
+window.TOPMENU = TOPMENU;
+
 // ── تعريف الصفحات والقائمة الجانبية ──────────────────────────────
 const PAGES = [
   { section: 'عام', items: [
     { id: 'dashboard', label: 'لوحة التحكم', icon: '📊' },
   ]},
-  { section: 'الحركة المخزنية', items: [
-    { id: 'receive', label: 'استلام مخزني', icon: '📥', roles: ['admin','accountant'] },
-    { id: 'issue', label: 'إصدار مخزني', icon: '📤', roles: ['admin','accountant'] },
+  { section: 'الحركة اليومية', items: [
+    { id: 'receive', label: 'ادخال فواتير', icon: '📥', roles: ['admin','accountant'] },
+    { id: 'issue', label: 'اخراج فواتير', icon: '📤', roles: ['admin','accountant'] },
+    { id: 'whdaily', label: 'كشف يومية مستودع', icon: '🗓' },
+    { id: 'balance', label: 'جرد مستودع', icon: '⚖️' },
+    { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
+    { id: 'docs', label: 'كشف الحركة اليومية', icon: '📑' },
+    { id: 'cashbox', label: 'ادخال وتعديل يومية صندوق', icon: '💰', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'receiptsvouchers', label: 'ادخال وتعديل إيصال قبض', icon: '🧾', roles: ['admin','accountant'] },
+    { id: 'accountstatement', label: 'كشف الحساب', icon: '📄' },
+    { id: 'journal', label: 'ادخال وتعديل سند قيد مركب', icon: '🧮' },
+    { id: 'coabalances', label: 'كشف أرصدة حسابات', icon: '📋' },
+    { id: 'paymentreceiptorders', label: 'ادخال وتعديل أمر صرف', icon: '📤' },
+    { id: 'receiptorders', label: 'ادخال وتعديل أمر قبض', icon: '📥' },
+    { id: 'materialinquiry', label: 'الاستعلام عن مادة', icon: '🔎' },
+  ]},
+  { section: 'الحركة المخزنية (تفصيلي)', items: [
     { id: 'transfer', label: 'تحويل بين المخازن', icon: '🔀', roles: ['admin','accountant'] },
-    { id: 'docs', label: 'سجل الوثائق', icon: '📑' },
-    { id: 'balance', label: 'الأرصدة والجرد', icon: '⚖️' },
     { id: 'physcount', label: 'الجرد الدوري', icon: '🧮', roles: ['admin','accountant','manager'] },
     { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
-    { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
     { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
     { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant'] },
   ]},
   { section: 'المحاسبة', items: [
     { id: 'coa', label: 'دليل الحسابات', icon: '🗂' },
-    { id: 'journal', label: 'القيود المحاسبية', icon: '🧾' },
     { id: 'approvals', label: 'طلبات الموافقة', icon: '📨', roles: ['admin'] },
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
     { id: 'budget', label: 'الموازنة التقديرية', icon: '📐', roles: ['admin','manager','accountant','auditor'] },
@@ -88,7 +212,6 @@ const PAGES = [
     { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','accountant'], check: canTreasury },
   ]},
   { section: 'الخزينة والرواتب', items: [
-    { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','accountant'], check: canTreasury },
     { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','accountant'], check: canTreasury },
   ]},
   { section: 'السلفة المستديمة', items: [
@@ -120,8 +243,113 @@ function renderSidebar() {
   document.getElementById('user-avatar').textContent = (ME.full_name || '?').trim()[0]?.toUpperCase() || '?';
 }
 
+// ── القائمة العلوية: رسم + تفاعل ──────────────────────────────
+function renderTopMenu() {
+  const bar = document.getElementById('topmenu-bar');
+  if (!bar) return;
+  bar.innerHTML = TOPMENU.map(cat => {
+    if (cat.action) {
+      return `<div class="tm-cat tm-leaf" onclick="runTopAction('${cat.action}')"><span class="tm-icon">${cat.icon || ''}</span>${cat.label}</div>`;
+    }
+    return `<div class="tm-cat" data-cat="${cat.id}">
+      <span class="tm-icon">${cat.icon || ''}</span>${cat.label} <span class="tm-caret">▾</span>
+      <div class="tm-drop">
+        ${cat.items.map(it => it.action
+          ? `<div class="tm-item" onclick="runTopAction('${it.action}')">${it.label}</div>`
+          : `<div class="tm-item" onclick="go('${it.page}')">${it.label}</div>`
+        ).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  bar.querySelectorAll('.tm-cat[data-cat]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.tm-drop')) return; // نقر داخل القائمة المنسدلة يُعالَج بمعالج العنصر نفسه
+      const open = el.classList.contains('open');
+      bar.querySelectorAll('.tm-cat').forEach(c => c.classList.remove('open'));
+      if (!open) el.classList.add('open');
+    });
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.tm-cat')) bar.querySelectorAll('.tm-cat').forEach(c => c.classList.remove('open'));
+  });
+}
+
+window.runTopAction = function runTopAction(action) {
+  document.querySelectorAll('.tm-cat').forEach(c => c.classList.remove('open'));
+  if (typeof window[action] === 'function') window[action]();
+  else toast('هذا الإجراء غير متاح بعد', 'e');
+};
+
+window.openCalculator = function openCalculator() {
+  if (document.getElementById('calc-modal')) return;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg'; bg.id = 'calc-modal';
+  bg.innerHTML = `<div class="modal" style="width:290px">
+    <div class="card-title">آلة حاسبة</div>
+    <input id="calc-screen" readonly style="text-align:left;font-family:var(--font-mono);font-size:20px;margin-bottom:10px" value="0">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      ${['7','8','9','÷','4','5','6','×','1','2','3','-','0','.','=','+'].map(k =>
+        `<button class="btn btn-o" onclick="calcPress('${k}')" style="padding:12px 0">${k}</button>`).join('')}
+      <button class="btn btn-d" style="grid-column:span 4" onclick="calcPress('C')">مسح</button>
+    </div>
+    <div class="form-foot"><button class="btn btn-o" onclick="document.getElementById('calc-modal').remove()">إغلاق</button></div>
+  </div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener('mousedown', e => { if (e.target === bg) bg.remove(); });
+};
+let calcBuf = '';
+window.calcPress = function calcPress(k) {
+  const scr = document.getElementById('calc-screen');
+  if (k === 'C') { calcBuf = ''; scr.value = '0'; return; }
+  if (k === '=') {
+    try {
+      const expr = calcBuf.replace(/×/g, '*').replace(/÷/g, '/');
+      // eslint-disable-next-line no-new-func
+      const r = Function('"use strict";return (' + expr + ')')();
+      scr.value = String(r); calcBuf = String(r);
+    } catch { scr.value = 'خطأ'; calcBuf = ''; }
+    return;
+  }
+  calcBuf += k; scr.value = calcBuf;
+};
+
+window.toggleLanguage = function toggleLanguage() {
+  toast('دعم تعدد اللغات (English) ضمن مرحلة قادمة — الواجهة حالياً عربية بالكامل', 'i');
+};
+
 const PAGE_RENDER = {}; // كل وحدة (inventory.js, accounting.js ...) تسجّل رواسم صفحاتها هنا
 window.PAGE_RENDER = PAGE_RENDER;
+
+// صفحة "حول البرنامج" — حقيقية وثابتة (وليست قيد إنشاء)
+PAGE_RENDER.about = async (root) => {
+  root.innerHTML = `<div class="ph"><div class="ph-title">حول البرنامج</div></div>
+    <div class="card" style="text-align:center;padding:40px">
+      <div class="seal" style="margin:0 auto 14px">🏛</div>
+      <div style="font-size:18px;font-weight:800;margin-bottom:6px">${window.APP_CONFIG?.APP_NAME || 'نظام السيطرة المخزنية والمحاسبية'}</div>
+      <div style="color:var(--ink3);font-size:12.5px">نظام ويب لإدارة المخزون والمحاسبة والخزينة والسلفة المستديمة، مبني على Supabase.</div>
+    </div>`;
+};
+
+// ── مولّد صفحات "قيد الإنشاء" آلياً لأي معرّف صفحة مذكور بالقوائم وليس له راسم مسجَّل بعد ──
+function registerStubPages() {
+  const allPageIds = new Set();
+  PAGES.forEach(sec => sec.items.forEach(it => allPageIds.add(it.id)));
+  TOPMENU.forEach(cat => (cat.items || []).forEach(it => { if (it.page) allPageIds.add(it.page); }));
+  allPageIds.forEach(id => {
+    if (PAGE_RENDER[id]) return;
+    PAGE_RENDER[id] = async (root) => {
+      const label = findLabel(id);
+      root.innerHTML = `<div class="ph"><div class="ph-title">${label}</div></div>
+        <div class="card"><div class="ec">🚧 هذه الميزة ضمن مراحل التطوير القادمة وليست جاهزة بعد.<br>
+        <span style="font-size:11.5px">سيتم بناؤها كوحدة كاملة (قاعدة بيانات + شاشة إدخال + تقارير) في مرحلة لاحقة حسب أولوية العمل.</span></div></div>`;
+    };
+  });
+}
+function findLabel(id) {
+  for (const sec of PAGES) { const it = sec.items.find(x => x.id === id); if (it) return it.label; }
+  for (const cat of TOPMENU) { const it = (cat.items || []).find(x => x.page === id); if (it) return it.label; }
+  return id;
+}
 
 async function go(pageId) {
   if (!PAGE_RENDER[pageId]) return;
@@ -207,7 +435,9 @@ async function boot() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('pending-screen')?.classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
+  registerStubPages();
   renderSidebar();
+  renderTopMenu();
   go('dashboard');
 }
 window.showPending = function showPending() {

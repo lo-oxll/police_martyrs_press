@@ -65,9 +65,16 @@
       <button class="btn-out" onclick="doLogout()">تسجيل الخروج</button>
     </div>
   </aside>
-  <main class="main">
-    <div id="page-root"></div>
-  </main>
+  <div class="app-col">
+    <!-- ═══ الشريط العلوي (القائمة الرئيسية) ═══ -->
+    <div class="topmenu" id="topmenu">
+      <button class="topmenu-burger no-print" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+      <div class="tm-bar" id="topmenu-bar"></div>
+    </div>
+    <main class="main">
+      <div id="page-root"></div>
+    </main>
+  </div>
 </div>
 
 <div class="toast-wrap" id="toast-wrap"></div>
