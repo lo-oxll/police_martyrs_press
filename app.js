@@ -172,10 +172,10 @@ const TOPMENU = [
 window.TOPMENU = TOPMENU;
 
 // ── تعريف الصفحات والقائمة الجانبية ──────────────────────────────
+// القائمة الجانبية اليمنى تقتصر حصراً على العناصر المطلوبة، بلا تكرار: كل ميزة تظهر
+// مرة واحدة فقط بأحدث تسمية لها (مثال: "سند قيد مركب" و"يومية مركبة" هما نفس ميزة
+// القيد المحاسبي المركب — أُبقي على تسمية واحدة فقط وحُذفت الأخرى المكررة).
 const PAGES = [
-  { section: 'عام', items: [
-    { id: 'dashboard', label: 'لوحة التحكم', icon: '📊' },
-  ]},
   { section: 'الحركة اليومية', items: [
     { id: 'receive', label: 'ادخال فواتير', icon: '📥', roles: ['admin','accountant'] },
     { id: 'issue', label: 'اخراج فواتير', icon: '📤', roles: ['admin','accountant'] },
@@ -188,41 +188,9 @@ const PAGES = [
     { id: 'accountstatement', label: 'كشف الحساب', icon: '📄' },
     { id: 'journal', label: 'ادخال وتعديل سند قيد مركب', icon: '🧮' },
     { id: 'coabalances', label: 'كشف أرصدة حسابات', icon: '📋' },
-    { id: 'paymentreceiptorders', label: 'ادخال وتعديل أمر صرف', icon: '📤' },
-    { id: 'receiptorders', label: 'ادخال وتعديل أمر قبض', icon: '📥' },
+    { id: 'paymentreceiptorders', label: 'ادخال وتعديل أمر صرف', icon: '📤', roles: ['admin','accountant'] },
+    { id: 'receiptorders', label: 'ادخال وتعديل أمر قبض', icon: '📥', roles: ['admin','accountant'] },
     { id: 'materialinquiry', label: 'الاستعلام عن مادة', icon: '🔎' },
-  ]},
-  { section: 'الحركة المخزنية (تفصيلي)', items: [
-    { id: 'transfer', label: 'تحويل بين المخازن', icon: '🔀', roles: ['admin','accountant'] },
-    { id: 'physcount', label: 'الجرد الدوري', icon: '🧮', roles: ['admin','accountant','manager'] },
-    { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
-    { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
-    { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant'] },
-  ]},
-  { section: 'المحاسبة', items: [
-    { id: 'coa', label: 'دليل الحسابات', icon: '🗂' },
-    { id: 'approvals', label: 'طلبات الموافقة', icon: '📨', roles: ['admin'] },
-    { id: 'reports', label: 'التقارير المالية', icon: '📈' },
-    { id: 'budget', label: 'الموازنة التقديرية', icon: '📐', roles: ['admin','manager','accountant','auditor'] },
-    { id: 'fixedassets', label: 'الأصول الثابتة', icon: '🏢', roles: ['admin','accountant','manager','auditor'] },
-    { id: 'integrity', label: 'فحص سلامة البيانات', icon: '🩺', roles: ['admin','manager','auditor'] },
-  ]},
-  { section: 'إدارة الموظفين', items: [
-    { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','accountant'], check: canTreasury },
-    { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','accountant'], check: canTreasury },
-  ]},
-  { section: 'الخزينة والرواتب', items: [
-    { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','accountant'], check: canTreasury },
-  ]},
-  { section: 'السلفة المستديمة', items: [
-    { id: 'pettycash', label: 'سندات الصرف', icon: '🧾', roles: ['admin','manager','auditor','accountant'] },
-    { id: 'pettycashfund', label: 'قائمة السلفة', icon: '📒', roles: ['admin','manager','auditor','accountant'] },
-  ]},
-  { section: 'الإدارة', items: [
-    { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
-    { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
-    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
-    { id: 'security', label: 'الأمان (2FA)', icon: '🛡️' },
   ]},
 ];
 
@@ -244,6 +212,9 @@ function renderSidebar() {
 }
 
 // ── القائمة العلوية: رسم + تفاعل ──────────────────────────────
+// كل قسم بالقائمة العلوية (غير الأقسام ذات "action" المباشر) لا يفتح قائمة منسدلة منفصلة؛
+// بل ينتقل لصفحة رئيسية خاصة بالقسم تُعرض ضمن نفس مساحة المحتوى (page-root)، فتبقى متصلة
+// بالقائمة الرئيسية وليست منفصلة عنها كنافذة عائمة.
 function renderTopMenu() {
   const bar = document.getElementById('topmenu-bar');
   if (!bar) return;
@@ -251,26 +222,34 @@ function renderTopMenu() {
     if (cat.action) {
       return `<div class="tm-cat tm-leaf" onclick="runTopAction('${cat.action}')"><span class="tm-icon">${cat.icon || ''}</span>${cat.label}</div>`;
     }
-    return `<div class="tm-cat" data-cat="${cat.id}">
-      <span class="tm-icon">${cat.icon || ''}</span>${cat.label} <span class="tm-caret">▾</span>
-      <div class="tm-drop">
-        ${cat.items.map(it => it.action
-          ? `<div class="tm-item" onclick="runTopAction('${it.action}')">${it.label}</div>`
-          : `<div class="tm-item" onclick="go('${it.page}')">${it.label}</div>`
-        ).join('')}
-      </div>
+    return `<div class="tm-cat" data-cat="${cat.id}" onclick="go('${cat.id}')">
+      <span class="tm-icon">${cat.icon || ''}</span>${cat.label}
     </div>`;
   }).join('');
-  bar.querySelectorAll('.tm-cat[data-cat]').forEach(el => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.tm-drop')) return; // نقر داخل القائمة المنسدلة يُعالَج بمعالج العنصر نفسه
-      const open = el.classList.contains('open');
-      bar.querySelectorAll('.tm-cat').forEach(c => c.classList.remove('open'));
-      if (!open) el.classList.add('open');
-    });
-  });
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.tm-cat')) bar.querySelectorAll('.tm-cat').forEach(c => c.classList.remove('open'));
+}
+
+// تحديث تمييز القسم النشط بالشريط العلوي كلما انتقلنا لصفحة (صفحة القسم نفسها، أو أي صفحة فرعية تابعة له)
+function highlightTopMenu(pageId) {
+  const bar = document.getElementById('topmenu-bar');
+  if (!bar) return;
+  const owner = TOPMENU.find(c => c.id === pageId) || TOPMENU.find(c => (c.items || []).some(it => it.page === pageId));
+  bar.querySelectorAll('.tm-cat').forEach(el => el.classList.toggle('active', !!owner && el.dataset.cat === owner.id));
+}
+
+// صفحة رئيسية لكل قسم من أقسام القائمة العلوية — تعرض عناصره كبطاقات ضمن نفس الصفحة
+function registerTopMenuHomePages() {
+  TOPMENU.forEach(cat => {
+    if (cat.action || PAGE_RENDER[cat.id]) return; // الأقسام ذات إجراء مباشر، أو معرّف مستخدم مسبقاً، تُستثنى
+    PAGE_RENDER[cat.id] = async (root) => {
+      root.innerHTML = `<div class="ph"><div><div class="ph-title">${cat.icon || ''} ${cat.label}</div>
+        <div class="ph-sub">اختر أحد العناصر التالية</div></div></div>
+        <div class="tile-grid">
+          ${cat.items.map(it => it.action
+            ? `<div class="tile" onclick="runTopAction('${it.action}')"><div class="tile-lbl">${it.label}</div></div>`
+            : `<div class="tile" onclick="go('${it.page}')"><div class="tile-lbl">${it.label}</div></div>`
+          ).join('')}
+        </div>`;
+    };
   });
 }
 
@@ -354,6 +333,7 @@ function findLabel(id) {
 async function go(pageId) {
   if (!PAGE_RENDER[pageId]) return;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === pageId));
+  highlightTopMenu(pageId);
   const main = document.getElementById('page-root');
   main.innerHTML = '<div class="ec">جارِ التحميل...</div>';
   try {
@@ -435,6 +415,7 @@ async function boot() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('pending-screen')?.classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
+  registerTopMenuHomePages();
   registerStubPages();
   renderSidebar();
   renderTopMenu();
