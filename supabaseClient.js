@@ -1039,6 +1039,65 @@ const DB = {
     const st = await this.accountStatement(cust.account_id, dateFrom, dateTo);
     return { customer: cust, ...st };
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  بطاقة المشروع + بطاقة الفرع — المرحلة ٢
+  // ══════════════════════════════════════════════════════════════════
+  // ── بطاقة المشروع ─────────────────────────────
+  async listProjects(activeOnly = true) {
+    let q = sb.from('projects').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createProject(p) {
+    const { data, error } = await sb.from('projects').insert(p).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_project', 'projects', data.id, { code: p.code, name: p.name });
+    return data;
+  },
+  async updateProject(id, patch) {
+    const { error } = await sb.from('projects').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_project', 'projects', id, patch);
+  },
+  async deactivateProject(id) {
+    const { error } = await sb.from('projects').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_project', 'projects', id, {});
+  },
+  async hardDeleteProject(id, name) {
+    const { error } = await sb.from('projects').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_project', 'projects', id, { name });
+  },
+
+  // ── بطاقة الفرع ─────────────────────────────
+  async listBranches(activeOnly = true) {
+    let q = sb.from('branches').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createBranch(b) {
+    const { data, error } = await sb.from('branches').insert(b).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_branch', 'branches', data.id, { code: b.code, name: b.name });
+    return data;
+  },
+  async updateBranch(id, patch) {
+    const { error } = await sb.from('branches').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_branch', 'branches', id, patch);
+  },
+  async deactivateBranch(id) {
+    const { error } = await sb.from('branches').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_branch', 'branches', id, {});
+  },
+  async hardDeleteBranch(id, name) {
+    const { error } = await sb.from('branches').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_branch', 'branches', id, { name });
+  },
 };
 
 window.DB = DB;
