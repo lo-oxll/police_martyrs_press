@@ -1429,6 +1429,80 @@ const DB = {
     let running = 0;
     return (data || []).map(d => { running += Number(d.total || 0); return { date: d.doc_date, doc_num: d.doc_num, warehouse: d.warehouses?.name || '', total: Number(d.total || 0), running }; });
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  المرحلة ٦: سندات الديون + تقاريرها
+  // ══════════════════════════════════════════════════════════════════
+  async listDebtNotes(noteType = null, status = null, limit = 200) {
+    let q = sb.from('debt_notes').select('*, customers(name), debit:debit_account_id(code,name), credit:credit_account_id(code,name)')
+      .order('due_date', { ascending: true }).limit(limit);
+    if (noteType) q = q.eq('note_type', noteType);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  // ينشئ سند الدين + يُرحِّل قيد إصداره فوراً (مدين/دائن حسب اختيار المستخدم)
+  async createDebtNote(n) {
+    const session = await this.currentSession();
+    const je = await this.postManualEntry({
+      entry_no: 'JE-DEBT-' + Date.now().toString().slice(-8), entry_date: n.issue_date, ref_type: 'debt_note',
+      description: `سند دين ${n.doc_num} — ${n.note_type === 'receivable' ? 'دين لنا' : 'دين علينا'}`, created_by: session?.user?.id,
+    }, [
+      { account_id: n.debit_account_id, debit: n.amount, credit: 0 },
+      { account_id: n.credit_account_id, debit: 0, credit: n.amount },
+    ]);
+    const { data, error } = await sb.from('debt_notes').insert({
+      doc_num: n.doc_num, note_type: n.note_type, issue_date: n.issue_date, due_date: n.due_date || null, amount: n.amount,
+      customer_id: n.customer_id || null, counterparty_name: n.counterparty_name || null,
+      debit_account_id: n.debit_account_id, credit_account_id: n.credit_account_id,
+      notes: n.notes || null, created_by: session?.user?.id, journal_entry_id: je.id,
+    }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_debt_note', 'debt_notes', data.id, { doc_num: n.doc_num, amount: n.amount });
+    return data;
+  },
+  // تحصيل/سداد السند: يُرحِّل قيد يقفل حساب السند مقابل حساب التحصيل/السداد الفعلي المختار
+  async settleDebtNote(id, settlementAccountId, settledDate) {
+    const note = (await sb.from('debt_notes').select('*').eq('id', id).single()).data;
+    if (!note) throw new Error('سند الدين غير موجود');
+    if (note.status !== 'open') throw new Error('السند ليس مفتوحاً');
+    const session = await this.currentSession();
+    const lines = note.note_type === 'receivable'
+      ? [{ account_id: settlementAccountId, debit: note.amount, credit: 0 }, { account_id: note.debit_account_id, debit: 0, credit: note.amount }]
+      : [{ account_id: note.credit_account_id, debit: note.amount, credit: 0 }, { account_id: settlementAccountId, debit: 0, credit: note.amount }];
+    const je = await this.postManualEntry({
+      entry_no: 'JE-DEBTSTL-' + Date.now().toString().slice(-8), entry_date: settledDate, ref_type: 'debt_note_settle',
+      description: `تسوية سند دين ${note.doc_num}`, created_by: session?.user?.id,
+    }, lines);
+    const { error } = await sb.from('debt_notes').update({ status: 'settled', settled_date: settledDate, settlement_account_id: settlementAccountId, settlement_journal_entry_id: je.id }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('settle_debt_note', 'debt_notes', id, { doc_num: note.doc_num });
+  },
+  // إلغاء سند مفتوح لم يُسوَّ بعد: يُرحِّل قيداً عكسياً لإصداره الأصلي
+  async cancelDebtNote(id) {
+    const note = (await sb.from('debt_notes').select('*').eq('id', id).single()).data;
+    if (!note) throw new Error('سند الدين غير موجود');
+    if (note.status !== 'open') throw new Error('لا يمكن إلغاء سند مُسوًّى مسبقاً');
+    const session = await this.currentSession();
+    await this.postManualEntry({
+      entry_no: 'JE-DEBTCXL-' + Date.now().toString().slice(-8), entry_date: todayISO(), ref_type: 'debt_note_cancel',
+      description: `إلغاء سند دين ${note.doc_num}`, created_by: session?.user?.id,
+    }, [
+      { account_id: note.credit_account_id, debit: note.amount, credit: 0 },
+      { account_id: note.debit_account_id, debit: 0, credit: note.amount },
+    ]);
+    const { error } = await sb.from('debt_notes').update({ status: 'cancelled' }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('cancel_debt_note', 'debt_notes', id, { doc_num: note.doc_num });
+  },
+  // ── تقارير سندات الديون: تجميع حسب النوع + تقادم (كم متأخر عن الاستحقاق) ─────────────────────────────
+  async debtNoteReport() {
+    const notes = await this.listDebtNotes(null, 'open');
+    const today = todayISO();
+    const withAging = notes.map(n => ({ ...n, overdueDays: n.due_date ? Math.max(0, Math.floor((new Date(today) - new Date(n.due_date)) / 86400000)) : 0 }));
+    const totalReceivable = withAging.filter(n => n.note_type === 'receivable').reduce((s, n) => s + Number(n.amount), 0);
+    const totalPayable = withAging.filter(n => n.note_type === 'payable').reduce((s, n) => s + Number(n.amount), 0);
+    return { notes: withAging, totalReceivable, totalPayable };
+  },
 };
 
 window.DB = DB;
