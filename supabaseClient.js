@@ -1190,6 +1190,177 @@ const DB = {
     await this.log('bulk_create_materials', 'materials', null, { ok, fail, total: rows.length });
     return { ok, fail, errors };
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  المرحلة ٤: تقارير مستودعية ومحاسبية موسّعة — تُبنى فوق البيانات الموجودة
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── كشف حركة مادة: كل حركات مادة معيّنة بمخزن معيّن (استلام/إصدار/تحويل) مرتّبة زمنياً برصيد متحرك ─────────────────────────────
+  async materialMovement(materialId, warehouseId, dateFrom, dateTo) {
+    const [rec, iss, trfOut, trfIn] = await Promise.all([
+      sb.from('receipt_items').select('qty, unit_price, receipt_docs!inner(doc_num, doc_date, warehouse_id)')
+        .eq('material_id', materialId).eq('receipt_docs.warehouse_id', warehouseId).eq('receipt_docs.is_cancelled', false)
+        .gte('receipt_docs.doc_date', dateFrom).lte('receipt_docs.doc_date', dateTo),
+      sb.from('issue_items').select('qty, unit_price, issue_docs!inner(doc_num, doc_date, warehouse_id)')
+        .eq('material_id', materialId).eq('issue_docs.warehouse_id', warehouseId).eq('issue_docs.is_cancelled', false)
+        .gte('issue_docs.doc_date', dateFrom).lte('issue_docs.doc_date', dateTo),
+      sb.from('stock_transfer_items').select('qty, stock_transfers!inner(doc_num, doc_date, from_warehouse_id, is_cancelled)')
+        .eq('material_id', materialId).eq('stock_transfers.from_warehouse_id', warehouseId).eq('stock_transfers.is_cancelled', false)
+        .gte('stock_transfers.doc_date', dateFrom).lte('stock_transfers.doc_date', dateTo),
+      sb.from('stock_transfer_items').select('qty, stock_transfers!inner(doc_num, doc_date, to_warehouse_id, is_cancelled)')
+        .eq('material_id', materialId).eq('stock_transfers.to_warehouse_id', warehouseId).eq('stock_transfers.is_cancelled', false)
+        .gte('stock_transfers.doc_date', dateFrom).lte('stock_transfers.doc_date', dateTo),
+    ]);
+    if (rec.error) throw rec.error; if (iss.error) throw iss.error; if (trfOut.error) throw trfOut.error; if (trfIn.error) throw trfIn.error;
+    const rows = [
+      ...(rec.data || []).map(r => ({ date: r.receipt_docs.doc_date, doc_num: r.receipt_docs.doc_num, type: 'استلام', qtyIn: Number(r.qty), qtyOut: 0, unit_price: Number(r.unit_price || 0) })),
+      ...(iss.data || []).map(r => ({ date: r.issue_docs.doc_date, doc_num: r.issue_docs.doc_num, type: 'إصدار', qtyIn: 0, qtyOut: Number(r.qty), unit_price: Number(r.unit_price || 0) })),
+      ...(trfIn.data || []).map(r => ({ date: r.stock_transfers.doc_date, doc_num: r.stock_transfers.doc_num, type: 'تحويل وارد', qtyIn: Number(r.qty), qtyOut: 0, unit_price: 0 })),
+      ...(trfOut.data || []).map(r => ({ date: r.stock_transfers.doc_date, doc_num: r.stock_transfers.doc_num, type: 'تحويل صادر', qtyIn: 0, qtyOut: Number(r.qty), unit_price: 0 })),
+    ].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    let bal = 0;
+    return rows.map(r => { bal += r.qtyIn - r.qtyOut; return { ...r, balance: bal }; });
+  },
+
+  // ── ملخص الحركة المستودعية: إجمالي وارد/صادر لكل مادة بمخزن بفترة، مع الرصيد الحالي ─────────────────────────────
+  async warehouseMovementSummary(warehouseId, dateFrom, dateTo) {
+    const [rec, iss, stock] = await Promise.all([
+      sb.from('receipt_items').select('qty, materials(id,store_num,name,unit), receipt_docs!inner(doc_date, warehouse_id, is_cancelled)')
+        .eq('receipt_docs.warehouse_id', warehouseId).eq('receipt_docs.is_cancelled', false)
+        .gte('receipt_docs.doc_date', dateFrom).lte('receipt_docs.doc_date', dateTo),
+      sb.from('issue_items').select('qty, materials(id,store_num,name,unit), issue_docs!inner(doc_date, warehouse_id, is_cancelled)')
+        .eq('issue_docs.warehouse_id', warehouseId).eq('issue_docs.is_cancelled', false)
+        .gte('issue_docs.doc_date', dateFrom).lte('issue_docs.doc_date', dateTo),
+      sb.from('material_stock').select('material_id, qty_on_hand').eq('warehouse_id', warehouseId),
+    ]);
+    if (rec.error) throw rec.error; if (iss.error) throw iss.error; if (stock.error) throw stock.error;
+    const map = {};
+    const bump = (m, field, qty) => {
+      if (!m) return;
+      map[m.id] = map[m.id] || { store_num: m.store_num, name: m.name, unit: m.unit, in: 0, out: 0, balance: 0 };
+      map[m.id][field] += Number(qty);
+    };
+    (rec.data || []).forEach(r => bump(r.materials, 'in', r.qty));
+    (iss.data || []).forEach(r => bump(r.materials, 'out', r.qty));
+    (stock.data || []).forEach(s => { if (map[s.material_id]) map[s.material_id].balance = Number(s.qty_on_hand); });
+    return Object.values(map).sort((a, b) => a.store_num.localeCompare(b.store_num));
+  },
+
+  // ── كشف يومية مستودع (عادي/موسّع): كل الوثائق المؤثرة بمخزن بفترة، مرتّبة زمنياً ─────────────────────────────
+  async warehouseJournal(warehouseId, dateFrom, dateTo) {
+    const [rec, iss, trfOut, trfIn] = await Promise.all([
+      sb.from('receipt_docs').select('doc_num, doc_date, total, is_cancelled').eq('warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('issue_docs').select('doc_num, doc_date, total, is_cancelled').eq('warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('stock_transfers').select('doc_num, doc_date, is_cancelled, to:to_warehouse_id(name)').eq('from_warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('stock_transfers').select('doc_num, doc_date, is_cancelled, from:from_warehouse_id(name)').eq('to_warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+    ]);
+    if (rec.error) throw rec.error; if (iss.error) throw iss.error; if (trfOut.error) throw trfOut.error; if (trfIn.error) throw trfIn.error;
+    const rows = [
+      ...(rec.data || []).map(d => ({ date: d.doc_date, doc_num: d.doc_num, type: 'استلام', detail: '—', amount: Number(d.total || 0) })),
+      ...(iss.data || []).map(d => ({ date: d.doc_date, doc_num: d.doc_num, type: 'إصدار', detail: '—', amount: Number(d.total || 0) })),
+      ...(trfOut.data || []).map(d => ({ date: d.doc_date, doc_num: d.doc_num, type: 'تحويل صادر', detail: 'إلى: ' + (d.to?.name || ''), amount: 0 })),
+      ...(trfIn.data || []).map(d => ({ date: d.doc_date, doc_num: d.doc_num, type: 'تحويل وارد', detail: 'من: ' + (d.from?.name || ''), amount: 0 })),
+    ].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    return rows;
+  },
+
+  // ── كشف اجمالي لمستودع: مجاميع القيمة المالية بفترة + قيمة الرصيد الحالي ─────────────────────────────
+  async warehouseTotals(warehouseId, dateFrom, dateTo) {
+    const [rec, iss, stock] = await Promise.all([
+      sb.from('receipt_docs').select('total').eq('warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('issue_docs').select('total').eq('warehouse_id', warehouseId).eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('material_stock').select('qty_on_hand, avg_price').eq('warehouse_id', warehouseId),
+    ]);
+    if (rec.error) throw rec.error; if (iss.error) throw iss.error; if (stock.error) throw stock.error;
+    const totalReceipts = (rec.data || []).reduce((s, r) => s + Number(r.total || 0), 0);
+    const totalIssues = (iss.data || []).reduce((s, r) => s + Number(r.total || 0), 0);
+    const stockValue = (stock.data || []).reduce((s, r) => s + Number(r.qty_on_hand || 0) * Number(r.avg_price || 0), 0);
+    return { totalReceipts, totalIssues, net: totalReceipts - totalIssues, stockValue };
+  },
+
+  // ── تقارير المبيعات والمشتريات (تحليلي/تجميعي/احصائي) — استعلام واحد، عرض مختلف بالواجهة ─────────────────────────────
+  async salesPurchasesData(dateFrom, dateTo) {
+    const [purch, sales] = await Promise.all([
+      sb.from('receipt_items').select('qty, unit_price, materials(store_num,name,unit), receipt_docs!inner(doc_date, is_cancelled, warehouses(name))')
+        .eq('receipt_docs.is_cancelled', false).gte('receipt_docs.doc_date', dateFrom).lte('receipt_docs.doc_date', dateTo),
+      sb.from('issue_items').select('qty, unit_price, materials(store_num,name,unit), issue_docs!inner(doc_date, is_cancelled, warehouses(name))')
+        .eq('issue_docs.is_cancelled', false).gte('issue_docs.doc_date', dateFrom).lte('issue_docs.doc_date', dateTo),
+    ]);
+    if (purch.error) throw purch.error; if (sales.error) throw sales.error;
+    const norm = (rows, docKey) => (rows || []).map(r => ({
+      date: r[docKey].doc_date, warehouse: r[docKey].warehouses?.name || '', store_num: r.materials?.store_num || '',
+      name: r.materials?.name || '', unit: r.materials?.unit || '', qty: Number(r.qty), value: Number(r.qty) * Number(r.unit_price || 0),
+    }));
+    return { purchases: norm(purch.data, 'receipt_docs'), sales: norm(sales.data, 'issue_docs') };
+  },
+
+  // ── كشف الفواتير المستحقة: أرصدة الزبائن المدينة حتى تاريخ اليوم ─────────────────────────────
+  async dueCustomerBalances() {
+    const customers = await this.listCustomers();
+    const today = new Date().toISOString().split('T')[0];
+    const out = [];
+    for (const c of customers) {
+      try {
+        const st = await this.accountStatement(c.account_id, '1900-01-01', today);
+        if (st.closing > 0) out.push({ customer: c.name, code: c.code, balance: st.closing });
+      } catch (e) { /* تجاهل زبون بحساب معطوب */ }
+    }
+    return out.sort((a, b) => b.balance - a.balance);
+  },
+
+  // ── كشوفات تفصيلية: كل قيود اليومية بفترة (دفتر أستاذ عام موسّع) ─────────────────────────────
+  async detailedLedgerAll(dateFrom, dateTo) {
+    const { data, error } = await sb.from('journal_lines')
+      .select('debit, credit, chart_of_accounts(code,name), journal_entries!inner(entry_no, entry_date, description)')
+      .gte('journal_entries.entry_date', dateFrom).lte('journal_entries.entry_date', dateTo)
+      .order('journal_entries(entry_date)', { ascending: true });
+    if (error) throw error;
+    return (data || []).map(l => ({ date: l.journal_entries.entry_date, entry_no: l.journal_entries.entry_no, description: l.journal_entries.description, code: l.chart_of_accounts?.code, name: l.chart_of_accounts?.name, debit: Number(l.debit || 0), credit: Number(l.credit || 0) }));
+  },
+
+  // ── كشوفات اجمالية: مجاميع مصنّفة حسب نوع الحساب (ميزان مراجعة مبسّط) ─────────────────────────────
+  async accountTypeSummary() {
+    const tb = await this.trialBalance();
+    const byType = {};
+    tb.forEach(r => {
+      byType[r.type] = byType[r.type] || { type: r.type, debit: 0, credit: 0 };
+      byType[r.type].debit += Number(r.total_debit || 0);
+      byType[r.type].credit += Number(r.total_credit || 0);
+    });
+    return Object.values(byType);
+  },
+
+  // ── كشوفات الأصول والموازنة: يجمع الأصول الثابتة + الموازنة التقديرية بتقرير واحد ─────────────────────────────
+  async assetsBudgetStatement() {
+    const fy = await this.activeFiscalYear();
+    const [assets, budget] = await Promise.all([this.listFixedAssets(true), fy ? this.listBudgets(fy.id) : []]);
+    const totalAssetsCost = assets.reduce((s, a) => s + Number(a.cost || 0), 0);
+    const totalBudget = (budget || []).reduce((s, b) => s + Number(b.budgeted_amount || 0), 0);
+    return { fy, assets, budget: budget || [], totalAssetsCost, totalBudget };
+  },
+
+  // ── دليل مراكز الكلفة ─────────────────────────────
+  async listCostCenters(activeOnly = true) {
+    let q = sb.from('cost_centers').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createCostCenter(c) {
+    const { data, error } = await sb.from('cost_centers').insert(c).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_cost_center', 'cost_centers', data.id, c);
+    return data;
+  },
+  async updateCostCenter(id, patch) {
+    const { error } = await sb.from('cost_centers').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_cost_center', 'cost_centers', id, patch);
+  },
+  async deactivateCostCenter(id) {
+    const { error } = await sb.from('cost_centers').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_cost_center', 'cost_centers', id, {});
+  },
 };
 
 window.DB = DB;
