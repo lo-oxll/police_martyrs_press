@@ -1098,6 +1098,98 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('hard_delete_branch', 'branches', id, { name });
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  تعريف المناطق والشوارع + بطاقة صنف رئيسي + بطاقة تشابه مواد — المرحلة ٣
+  // ══════════════════════════════════════════════════════════════════
+  // ── المناطق والشوارع ─────────────────────────────
+  async listRegions() {
+    const { data, error } = await sb.from('regions').select('*, streets(*)').eq('is_active', true).order('name');
+    if (error) throw error; return data;
+  },
+  async createRegion(name) {
+    const { data, error } = await sb.from('regions').insert({ name }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_region', 'regions', data.id, { name });
+    return data;
+  },
+  async deleteRegion(id, name) {
+    const { error } = await sb.from('regions').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_region', 'regions', id, { name });
+  },
+  async createStreet(regionId, name) {
+    const { data, error } = await sb.from('streets').insert({ region_id: regionId, name }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_street', 'streets', data.id, { name });
+    return data;
+  },
+  async deleteStreet(id, name) {
+    const { error } = await sb.from('streets').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_street', 'streets', id, { name });
+  },
+
+  // ── بطاقة صنف رئيسي (تصنيف المواد) ─────────────────────────────
+  async listMaterialCategories(activeOnly = true) {
+    let q = sb.from('material_categories').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createMaterialCategory(c) {
+    const { data, error } = await sb.from('material_categories').insert(c).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_material_category', 'material_categories', data.id, c);
+    return data;
+  },
+  async updateMaterialCategory(id, patch) {
+    const { error } = await sb.from('material_categories').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_material_category', 'material_categories', id, patch);
+  },
+  async deactivateMaterialCategory(id) {
+    const { error } = await sb.from('material_categories').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_material_category', 'material_categories', id, {});
+  },
+
+  // ── بطاقة تشابه المواد (مجموعات بدائل/متكافئة) ─────────────────────────────
+  async listSimilarityGroups() {
+    const { data, error } = await sb.from('material_similarity_groups')
+      .select('*, material_similarity_items(id, materials(id,store_num,name,unit))').order('created_at', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createSimilarityGroup(name, notes) {
+    const { data, error } = await sb.from('material_similarity_groups').insert({ name, notes }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_similarity_group', 'material_similarity_groups', data.id, { name });
+    return data;
+  },
+  async deleteSimilarityGroup(id, name) {
+    const { error } = await sb.from('material_similarity_groups').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_similarity_group', 'material_similarity_groups', id, { name });
+  },
+  async addMaterialToGroup(groupId, materialId) {
+    const { error } = await sb.from('material_similarity_items').insert({ group_id: groupId, material_id: materialId });
+    if (error) throw friendlyDbError(error);
+  },
+  async removeMaterialFromGroup(itemId) {
+    const { error } = await sb.from('material_similarity_items').delete().eq('id', itemId);
+    if (error) throw friendlyDbError(error);
+  },
+
+  // ── توليد بطاقات مواد بشكل جماعي (يُبنى فوق دليل المواد الموجود؛ بلا جدول جديد) ─────────────────────────────
+  // rows: [{ store_num, name, unit, category, min_qty }] — يستخدم نفس upsertMaterial لكل سطر
+  async bulkCreateMaterials(rows) {
+    let ok = 0, fail = 0; const errors = [];
+    for (const r of rows) {
+      try { await this.upsertMaterial(r); ok++; }
+      catch (e) { fail++; errors.push(`${r.store_num || r.name}: ${e.message}`); }
+    }
+    await this.log('bulk_create_materials', 'materials', null, { ok, fail, total: rows.length });
+    return { ok, fail, errors };
+  },
 };
 
 window.DB = DB;
