@@ -522,6 +522,7 @@ const DB = {
     return (data || []).reduce((s, t) => s + (t.type === 'in' ? Number(t.amount) : -Number(t.amount)), 0);
   },
   // ينشئ حركة صندوق + قيد يدوي مرتبط بها (الطرف الآخر = counterparty_account_id)
+  // doc_kind: 'voucher' (سند فعلي، الافتراضي) أو 'order' (أمر قبض/صرف)
   async createCashTransaction(t) {
     const cashAccId = await this.getSetting('cashbox_account_id');
     if (!cashAccId) throw new Error('يجب ضبط "حساب الصندوق/النقدية" أولاً من صفحة المستخدمون والصلاحيات');
@@ -536,8 +537,10 @@ const DB = {
     const { data, error } = await sb.from('cash_transactions').insert({
       trans_date: t.trans_date, type: t.type, amount: t.amount, description: t.description,
       counterparty_account_id: t.counterparty_account_id, journal_entry_id: je.id, created_by: session?.user?.id,
+      doc_kind: t.doc_kind || 'voucher',
     }).select().single();
     if (error) throw error;
+    await this.log(t.type === 'in' ? 'create_receipt' : 'create_payment', 'cash_transactions', data.id, { amount: t.amount, doc_kind: t.doc_kind || 'voucher' });
     return data;
   },
   async listCashReconciliations(limit = 50) {
@@ -954,6 +957,87 @@ const DB = {
     const { data, error } = await sb.from('audit_log').select('*, profiles(full_name,role)')
       .order('created_at', { ascending: false }).limit(limit);
     if (error) throw error; return data;
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  بطاقة الزبون + إيصالات/أوامر القبض والدفع + كشف الحساب — المرحلة ١
+  // ══════════════════════════════════════════════════════════════════
+  // ── بطاقة الزبون ─────────────────────────────
+  async listCustomers(term = '', activeOnly = true) {
+    let q = sb.from('customers').select('*, chart_of_accounts(code,name)').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    if (term) q = q.or(`name.ilike.%${term}%,code.ilike.%${term}%,phone.ilike.%${term}%`);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async getCustomer(id) {
+    const { data, error } = await sb.from('customers').select('*, chart_of_accounts(code,name)').eq('id', id).single();
+    if (error) throw error; return data;
+  },
+  // ينشئ الزبون + حسابه بدليل الحسابات بعملية واحدة ذرّية (راجع fn_create_customer بملف SQL)
+  async createCustomer(c) {
+    const { data, error } = await sb.rpc('fn_create_customer', { p_code: c.code, p_name: c.name, p_phone: c.phone || null, p_address: c.address || null });
+    if (error) throw friendlyDbError(error);
+    await this.log('create_customer', 'customers', data.id, { code: c.code, name: c.name });
+    return data;
+  },
+  // تحديث بيانات الزبون؛ يُحدَّث اسم حسابه بدليل الحسابات أيضاً ليبقى متطابقاً معه بكل التقارير
+  async updateCustomer(id, patch, accountId) {
+    const { error: e1 } = await sb.from('customers').update(patch).eq('id', id);
+    if (e1) throw friendlyDbError(e1);
+    if (patch.name && accountId) {
+      const { error: e2 } = await sb.from('chart_of_accounts').update({ name: patch.name }).eq('id', accountId);
+      if (e2) throw friendlyDbError(e2);
+    }
+    await this.log('update_customer', 'customers', id, patch);
+  },
+  // حذف ناعم: يمنع ظهور الزبون بالقوائم دون فقدان تاريخه بالفواتير والإيصالات
+  async deactivateCustomer(id) {
+    const { error } = await sb.from('customers').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_customer', 'customers', id, {});
+  },
+  // حذف نهائي — مدير النظام فقط. يُرفض تلقائياً لو للزبون قيود محاسبية مسجّلة (حماية FK بحساب دليل الحسابات المرتبط)
+  async hardDeleteCustomer(id, accountId, name) {
+    const { error: e1 } = await sb.from('customers').delete().eq('id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('chart_of_accounts').delete().eq('id', accountId);
+    if (e2) throw friendlyDbError(e2); // لو فيه قيود سابقة سيُرفض هنا تلقائياً ويبقى سطر الزبون محذوفاً بينما الحساب يبقى — نادر الحدوث، يُعالَج يدوياً
+    await this.log('hard_delete_customer', 'customers', id, { name });
+  },
+
+  // ── إيصالات/أوامر القبض والدفع (تُبنى فوق صندوق المركز الموجود أصلاً) ─────────────────────────────
+  // type: 'in' (قبض) | 'out' (صرف) — docKind: 'voucher' (إيصال/سند فعلي) | 'order' (أمر)
+  async listCashDocs(type, docKind, limit = 100) {
+    let q = sb.from('cash_transactions').select('*, chart_of_accounts(code,name)')
+      .eq('type', type).eq('doc_kind', docKind)
+      .order('trans_date', { ascending: false }).order('created_at', { ascending: false }).limit(limit);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+
+  // ── كشف الحساب (دفتر أستاذ حساب معيّن بفترة معيّنة، مع رصيد افتتاحي ومتحرك) ─────────────────────────────
+  async accountStatement(accountId, dateFrom, dateTo) {
+    const { data: allLines, error } = await sb.from('journal_lines')
+      .select('debit, credit, journal_entries!inner(entry_date, entry_no, description)')
+      .eq('account_id', accountId)
+      .lte('journal_entries.entry_date', dateTo)
+      .order('journal_entries(entry_date)', { ascending: true });
+    if (error) throw error;
+    let opening = 0;
+    const rows = [];
+    (allLines || []).forEach(l => {
+      const d = l.journal_entries.entry_date;
+      const net = Number(l.debit || 0) - Number(l.credit || 0);
+      if (d < dateFrom) { opening += net; return; }
+      rows.push({ date: d, entry_no: l.journal_entries.entry_no, description: l.journal_entries.description, debit: Number(l.debit || 0), credit: Number(l.credit || 0) });
+    });
+    let running = opening;
+    const withBalance = rows.map(r => { running += (r.debit - r.credit); return { ...r, balance: running }; });
+    return { opening, closing: running, rows: withBalance };
+  },
+  async customerStatement(customerId, dateFrom, dateTo) {
+    const cust = await this.getCustomer(customerId);
+    const st = await this.accountStatement(cust.account_id, dateFrom, dateTo);
+    return { customer: cust, ...st };
   },
 };
 

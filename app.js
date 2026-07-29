@@ -78,8 +78,9 @@ const TOPMENU = [
   ]},
   { id: 'acctmove', label: 'ادخال الحركات المحاسبية', icon: '🧾', items: [
     { label: 'القيود المحاسبية', page: 'journal' },
-    { label: 'إيصالات القبض والدفع', page: 'receiptsvouchers' },
-    { label: 'أوامر القبض والدفع', page: 'paymentreceiptorders' },
+    { label: 'إيصالات القبض', page: 'receiptsvouchers' },
+    { label: 'أمر قبض', page: 'receiptorders' },
+    { label: 'أمر صرف', page: 'paymentreceiptorders' },
     { label: 'سندات الديون', page: 'debtnotes' },
     { label: 'الموازنة التقديرية', page: 'budget' },
   ]},
@@ -345,6 +346,7 @@ function findLabel(id) {
 
 async function go(pageId) {
   if (!PAGE_RENDER[pageId]) return;
+  window.__currentPageId = pageId;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === pageId));
   highlightTopMenu(pageId);
   const main = document.getElementById('page-root');
