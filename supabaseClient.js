@@ -1361,6 +1361,74 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('deactivate_cost_center', 'cost_centers', id, {});
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  المرحلة ٥: طلبيات البيع والشراء + ايصالات الشحن + يومية مبيعات
+  // ══════════════════════════════════════════════════════════════════
+  // ── طلبيات البيع والشراء ─────────────────────────────
+  async listOrders(orderType, status = null, limit = 100) {
+    let q = sb.from('sales_purchase_orders').select('*, customers(name), warehouses(name)')
+      .eq('order_type', orderType).order('order_date', { ascending: false }).limit(limit);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async orderItems(orderId) {
+    const { data, error } = await sb.from('sales_purchase_order_items').select('*, materials(store_num,name,unit)').eq('order_id', orderId);
+    if (error) throw error; return data;
+  },
+  async createOrder(header, items) {
+    const session = await this.currentSession();
+    const { data: ord, error: e1 } = await sb.from('sales_purchase_orders').insert({ ...header, created_by: session?.user?.id }).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('sales_purchase_order_items').insert(items.map(it => ({ ...it, order_id: ord.id })));
+    if (e2) { await sb.from('sales_purchase_orders').delete().eq('id', ord.id); throw friendlyDbError(e2); }
+    await this.log('create_order', 'sales_purchase_orders', ord.id, { doc_num: header.doc_num, order_type: header.order_type, items: items.length });
+    return ord;
+  },
+  async updateOrderStatus(id, status, fulfilledDocNum) {
+    const patch = { status }; if (fulfilledDocNum) patch.fulfilled_doc_num = fulfilledDocNum;
+    const { error } = await sb.from('sales_purchase_orders').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_order_status', 'sales_purchase_orders', id, patch);
+  },
+  async deleteOrder(id, docNum) {
+    const { error } = await sb.from('sales_purchase_orders').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_order', 'sales_purchase_orders', id, { doc_num: docNum });
+  },
+
+  // ── ايصالات الشحن ─────────────────────────────
+  async listShippingReceipts(limit = 100) {
+    const { data, error } = await sb.from('shipping_receipts').select('*').order('ship_date', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async createShippingReceipt(r) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('shipping_receipts').insert({ ...r, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_shipping_receipt', 'shipping_receipts', data.id, { doc_num: r.doc_num });
+    return data;
+  },
+  async updateShippingReceipt(id, patch) {
+    const { error } = await sb.from('shipping_receipts').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_shipping_receipt', 'shipping_receipts', id, patch);
+  },
+  async deleteShippingReceipt(id, docNum) {
+    const { error } = await sb.from('shipping_receipts').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_shipping_receipt', 'shipping_receipts', id, { doc_num: docNum });
+  },
+
+  // ── يومية مبيعات: كل فواتير الإصدار (عبر كل المخازن) بفترة، مرتّبة زمنياً ─────────────────────────────
+  async salesJournal(dateFrom, dateTo) {
+    const { data, error } = await sb.from('issue_docs').select('doc_num, doc_date, total, warehouses(name)')
+      .eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo)
+      .order('doc_date', { ascending: true });
+    if (error) throw error;
+    let running = 0;
+    return (data || []).map(d => { running += Number(d.total || 0); return { date: d.doc_date, doc_num: d.doc_num, warehouse: d.warehouses?.name || '', total: Number(d.total || 0), running }; });
+  },
 };
 
 window.DB = DB;
