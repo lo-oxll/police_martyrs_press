@@ -145,15 +145,6 @@ const TOPMENU = [
     { label: 'جرد المواد والمكونات', page: 'mfgcomponentscount' },
   ]},
   { id: 'services', label: 'خدمات', icon: '🛎', items: [
-    { label: 'ادخال وتعديل نموذج تصنيع', page: 'mfgmodel' },
-    { label: 'ادخال وتعديل طلبية تصنيع', page: 'mfgorder' },
-    { label: 'ادخال وتعديل عملية تصنيع', page: 'mfgprocess' },
-    { label: 'توزيع نفقات غير مباشرة', page: 'indirectexpenses' },
-    { label: 'كشف التصنيع واحتياجاته', page: 'mfgreport' },
-    { label: 'كشف انحراف التصنيع', page: 'mfgdeviation' },
-    { label: 'جرد المواد والمكونات', page: 'mfgcomponentscount' },
-  ]},
-  { id: 'settings', label: 'اعدادات البرنامج', icon: '⚙️', items: [
     { label: 'آلة حاسبة', action: 'openCalculator' },
     { label: 'الرقابة', page: 'auditlog' },
     { label: 'البريد الداخلي', page: 'internalmail' },
@@ -163,10 +154,39 @@ const TOPMENU = [
     { label: 'نسخ بيانات من والى فرع شركة آخر', page: 'branchsync' },
     { label: 'خدمات متفرقة', page: 'miscservices' },
     { label: 'خدمات المزامنة', page: 'syncservices' },
+    { label: 'تنفيذ أوامر SQL Server', page: 'sqlserverexec' },
     { label: 'الاستيراد من اكسل', page: 'excelimport' },
     { label: 'English', action: 'toggleLanguage' },
     { label: 'حول البرنامج', page: 'about' },
     { label: 'تحديث الاتصال بالشبكة', page: 'networksettings' },
+  ]},
+  { id: 'settings', label: 'اعدادات البرنامج', icon: '⚙️', items: [
+    { label: 'تصميم ثوابت عامة', page: 'designconstants' },
+    { label: 'تصميم اعدادات الفواتير', page: 'designinvoicesettings' },
+    { label: 'تصميم كشوفات الفواتير', page: 'designinvoicestatements' },
+    { label: 'تصميم مصطلحات البرنامج', page: 'designterminology' },
+    { label: 'تصميم طباعة إيصالات القبض والدفع', page: 'designreceiptprint' },
+    { label: 'تصميم طباعة سندات الديون', page: 'designdebtnoteprint' },
+    { label: 'تصميم طباعة بطاقات الأرشيف', page: 'designarchivecardprint' },
+    { label: 'تعريف الألوان والقياسات', page: 'colorsizes' },
+    { label: 'تعريف ماركات المواد', page: 'materialbrands' },
+    { label: 'تصميم ملاحظات بنود الفواتير', page: 'designinvoiceitemnotes' },
+    { label: 'ادخال وتعديل اسم الشركة', page: 'companyname' },
+    { label: 'تصميم الصلاحيات الأمنية', page: 'designsecurityroles' },
+    { label: 'تصميم سطح المكتب', page: 'designdesktop' },
+    { label: 'توزيع الأرباح', page: 'profitdistribution' },
+    { label: 'تدوير الميزانية', page: 'budgetrollover' },
+    { label: 'تصميم القوائم المالية', page: 'designfinancialstatements' },
+    { label: 'بطاقة قالب افتراضي', page: 'defaulttemplatecard' },
+    { label: 'مولد التقارير والخدمات', page: 'reportgenerator' },
+    { label: 'اعدادات نسبة المندوب', page: 'repcommissionsettings' },
+    { label: 'تصميم العروض', page: 'designoffers' },
+    { label: 'خطة مسار المندوب', page: 'reprouteplan' },
+    { label: 'اعدادات المتجر', page: 'storesettings' },
+    { label: 'اعدادات مستخدمي الجوال', page: 'mobileusersettings' },
+    { label: 'تعريف بطاقات الخصم', page: 'discountcards' },
+    { label: 'تطبيق المدير', page: 'managerapp' },
+    { label: 'أوقات عمل المواعيد', page: 'appointmenthours' },
   ]},
   { id: 'exit', label: 'خروج', icon: '🚪', action: 'doLogout' },
 ];
@@ -321,6 +341,17 @@ PAGE_RENDER.about = async (root) => {
       <div style="font-size:18px;font-weight:800;margin-bottom:6px">${window.APP_CONFIG?.APP_NAME || 'نظام السيطرة المخزنية والمحاسبية'}</div>
       <div style="color:var(--ink3);font-size:12.5px">نظام ويب لإدارة المخزون والمحاسبة والخزينة والسلفة المستديمة، مبني على Supabase.</div>
     </div>`;
+};
+
+// "تنفيذ أوامر SQL Server" غير قابلة للتطبيق على هذا النظام (Supabase/Postgres وليس SQL Server)،
+// ولن تُبنى كأداة تنفيذ SQL حر من المتصفح لأسباب أمنية — يُشرح هذا صراحةً بدل ترك زر وهمي أو "قيد الإنشاء" مضلِّل.
+PAGE_RENDER.sqlserverexec = async (root) => {
+  root.innerHTML = `<div class="ph"><div class="ph-title">تنفيذ أوامر SQL Server</div></div>
+    <div class="card"><div class="ec">⛔ هذه الميزة غير متاحة على هذا النظام لسببين:<br><br>
+      <span style="font-size:12.5px">١) قاعدة بيانات هذا النظام Supabase/PostgreSQL وليست SQL Server.<br>
+      ٢) السماح بتنفيذ أوامر SQL حرة من المتصفح ثغرة أمنية خطيرة (حتى لو كانت محدودة لمدير النظام) — لن تُبنى بهذا الشكل.</span><br><br>
+      <span style="font-size:12.5px">لو احتجت تنفيذ استعلام أو تعديل بقاعدة البيانات، استخدم SQL Editor مباشرة من لوحة Supabase.</span>
+    </div></div>`;
 };
 
 // ── مولّد صفحات "قيد الإنشاء" آلياً لأي معرّف صفحة مذكور بالقوائم وليس له راسم مسجَّل بعد ──
