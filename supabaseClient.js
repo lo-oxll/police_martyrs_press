@@ -1676,6 +1676,78 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('cancel_manufacturing_order', 'manufacturing_orders', id, {});
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  المرحلة ٨: البريد الداخلي + الباركود + أدوات صيانة/مزامنة/استيراد
+  // ══════════════════════════════════════════════════════════════════
+  // ── البريد الداخلي ─────────────────────────────
+  async listInbox(limit = 100) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('internal_messages').select('*, sender:sender_id(full_name)')
+      .or(`recipient_id.eq.${session.user.id},recipient_id.is.null`)
+      .order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async listSentMail(limit = 100) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('internal_messages').select('*, recipient:recipient_id(full_name)')
+      .eq('sender_id', session.user.id).order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async sendInternalMessage(recipientId, subject, body) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('internal_messages').insert({ sender_id: session.user.id, recipient_id: recipientId || null, subject, body }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('send_internal_message', 'internal_messages', data.id, { subject });
+    return data;
+  },
+  async markMessageRead(id) {
+    const { error } = await sb.from('internal_messages').update({ is_read: true }).eq('id', id);
+    if (error) throw error;
+  },
+  async deleteInternalMessage(id) {
+    const { error } = await sb.from('internal_messages').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+  },
+  async listAllUsers() {
+    const { data, error } = await sb.from('profiles').select('id, full_name, role').eq('is_active', true).order('full_name');
+    if (error) throw error; return data;
+  },
+
+  // ── الباركود ─────────────────────────────
+  async setMaterialBarcode(materialId, barcode) {
+    const { error } = await sb.from('materials').update({ barcode: barcode || null }).eq('id', materialId);
+    if (error) throw friendlyDbError(error);
+    await this.log('set_material_barcode', 'materials', materialId, { barcode });
+  },
+  async findMaterialByBarcode(barcode) {
+    const { data, error } = await sb.from('materials').select('*').eq('barcode', barcode).maybeSingle();
+    if (error) throw error; return data;
+  },
+
+  // ── صيانة الملفات: لوحة فحص سريعة لصحة البيانات التشغيلية ─────────────────────────────
+  async systemMaintenanceSummary() {
+    const [low, pendingUsers, pendingEntries, materialsNoBarcode, archiveNoUrl] = await Promise.all([
+      this.lowStock(), this.listPendingUsers(), this.listPendingEntries('pending'),
+      sb.from('materials').select('id', { count: 'exact', head: true }).or('barcode.is.null,barcode.eq.'),
+      sb.from('archive_cards').select('id', { count: 'exact', head: true }).is('file_url', null),
+    ]);
+    return {
+      lowStockCount: low.length, pendingUsersCount: pendingUsers.length, pendingEntriesCount: pendingEntries.length,
+      materialsNoBarcodeCount: materialsNoBarcode.count || 0, archiveNoUrlCount: archiveNoUrl.count || 0,
+    };
+  },
+
+  // ── خدمات المزامنة: تصدير نسخة كاملة من الجداول المرجعية الأساسية بصيغة JSON ─────────────────────────────
+  async exportSyncBundle() {
+    const [customers, materials, coa, warehouses, projects, branches] = await Promise.all([
+      this.listCustomers('', false), this.listMaterials('', null), this.chartOfAccounts(), this.listWarehouses(), this.listProjects(false), this.listBranches(false),
+    ]);
+    return { exported_at: new Date().toISOString(), customers, materials, chart_of_accounts: coa, warehouses, projects, branches };
+  },
+
+  // ── الاستيراد من اكسل: يعيد استخدام bulkCreateMaterials؛ الصفوف تُحضَّر بالواجهة من ملف XLSX ─────────────────────────────
+  async importMaterialsFromRows(rows) { return this.bulkCreateMaterials(rows); },
 };
 
 window.DB = DB;
