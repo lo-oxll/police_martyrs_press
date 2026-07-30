@@ -85,7 +85,7 @@ const gv = id => (document.getElementById(id)?.value ?? '').trim();
 const sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
 // المبالغ بالدينار العراقي — بدون فاصلة عشرية (لا يوجد تعامل عملي بكسور الدينار)
 const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US');
-const fmtIQD = n => fmt(n) + ' د.ع';
+const fmtIQD = n => fmt(n) + ' ' + (window.__currencyLabel || 'د.ع');
 const fmtQty = n => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -320,10 +320,20 @@ const PAGES = [
   ]},
 ];
 
+// ── الصلاحيات الأمنية: تجاوز اختياري فوق الأدوار الافتراضية المبرمجة بكل صفحة ──────────────────────────────
+let PAGE_PERM_OVERRIDES = {}; // { 'pageId|role': true/false }
+function pageAllowedForRole(pageId, defaultRoles) {
+  if (!ME) return false;
+  const key = pageId + '|' + ME.role;
+  if (Object.prototype.hasOwnProperty.call(PAGE_PERM_OVERRIDES, key)) return PAGE_PERM_OVERRIDES[key];
+  return !defaultRoles || can(...defaultRoles);
+}
+window.pageAllowedForRole = pageAllowedForRole;
+
 function renderSidebar() {
   const nav = document.getElementById('sidebar-nav');
   nav.innerHTML = PAGES.map(sec => {
-    const items = sec.items.filter(it => (!it.roles || can(...it.roles)) && (!it.check || it.check()));
+    const items = sec.items.filter(it => pageAllowedForRole(it.id, it.roles) && (!it.check || it.check()));
     if (!items.length) return '';
     return `<div class="nav-section">${sec.section}</div>` + items.map(it =>
       `<div class="nav-item" data-page="${it.id}" onclick="go('${it.id}')">
@@ -553,6 +563,18 @@ async function boot() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('pending-screen')?.classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
+
+  // تحميل تجاوزات الصلاحيات الأمنية + الثوابت العامة/بيانات الشركة (لا توقف الإقلاع لو فشلت — صامتة)
+  try {
+    const perms = await DB.listPagePermissions();
+    PAGE_PERM_OVERRIDES = {}; perms.forEach(p => { PAGE_PERM_OVERRIDES[p.page_id + '|' + p.role] = p.allowed; });
+  } catch (e) { /* صامت */ }
+  try {
+    const s = await DB.getAppSettingsBatch(['company_name', 'currency_label']);
+    if (s.company_name) { window.APP_CONFIG.APP_NAME = s.company_name; document.getElementById('sidebar')?.querySelector('.brand-name') && (document.querySelector('.brand-name').textContent = s.company_name); }
+    if (s.currency_label) window.__currencyLabel = s.currency_label;
+  } catch (e) { /* صامت */ }
+
   registerTopMenuHomePages();
   registerStubPages();
   renderSidebar();

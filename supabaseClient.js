@@ -1727,6 +1727,38 @@ const DB = {
     if (error) throw error; return data;
   },
 
+  // ══════════════════════════════════════════════════════════════════
+  //  اعدادات البرنامج الأساسية: بيانات الشركة + الثوابت العامة + الصلاحيات الأمنية
+  // ══════════════════════════════════════════════════════════════════
+  // ── إعدادات عامة دفعة واحدة (تُبنى فوق app_settings الموجود أصلاً) ─────────────────────────────
+  async getAppSettingsBatch(keys) {
+    const { data, error } = await sb.from('app_settings').select('key, value').in('key', keys);
+    if (error) throw error;
+    const map = {}; (data || []).forEach(r => { map[r.key] = r.value; }); return map;
+  },
+  async setAppSettingsBatch(obj) {
+    const rows = Object.entries(obj).map(([key, value]) => ({ key, value: value === null || value === undefined ? '' : String(value) }));
+    const { error } = await sb.from('app_settings').upsert(rows);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_app_settings', 'app_settings', null, obj);
+  },
+
+  // ── الصلاحيات الأمنية: مصفوفة تجاوز (Override) فوق الأدوار الافتراضية المبرمجة بكل صفحة ─────────────────────────────
+  async listPagePermissions() {
+    const { data, error } = await sb.from('page_permissions').select('*');
+    if (error) throw error; return data;
+  },
+  async setPagePermission(pageId, role, allowed) {
+    const { error } = await sb.from('page_permissions').upsert({ page_id: pageId, role, allowed }, { onConflict: 'page_id,role' });
+    if (error) throw friendlyDbError(error);
+    await this.log('set_page_permission', 'page_permissions', null, { page_id: pageId, role, allowed });
+  },
+  async resetPagePermission(pageId, role) {
+    const { error } = await sb.from('page_permissions').delete().eq('page_id', pageId).eq('role', role);
+    if (error) throw friendlyDbError(error);
+    await this.log('reset_page_permission', 'page_permissions', null, { page_id: pageId, role });
+  },
+
   // ── صيانة الملفات: لوحة فحص سريعة لصحة البيانات التشغيلية ─────────────────────────────
   async systemMaintenanceSummary() {
     const [low, pendingUsers, pendingEntries, materialsNoBarcode, archiveNoUrl] = await Promise.all([
