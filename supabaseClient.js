@@ -1503,6 +1503,179 @@ const DB = {
     const totalPayable = withAging.filter(n => n.note_type === 'payable').reduce((s, n) => s + Number(n.amount), 0);
     return { notes: withAging, totalReceivable, totalPayable };
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  المرحلة ٧: الملحقات (عقود/أرشيف/أعمال ومهام/تأجير) + التصنيع
+  // ══════════════════════════════════════════════════════════════════
+  // ── العقود ─────────────────────────────
+  async listContracts() {
+    const { data, error } = await sb.from('contracts').select('*, customers(name)').order('start_date', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createContract(c) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('contracts').insert({ ...c, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_contract', 'contracts', data.id, { doc_num: c.doc_num });
+    return data;
+  },
+  async updateContract(id, patch) {
+    const { error } = await sb.from('contracts').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_contract', 'contracts', id, patch);
+  },
+  async deleteContract(id, docNum) {
+    const { error } = await sb.from('contracts').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_contract', 'contracts', id, { doc_num: docNum });
+  },
+
+  // ── الأرشيف ─────────────────────────────
+  async listArchiveCards(term = '') {
+    let q = sb.from('archive_cards').select('*').order('archive_date', { ascending: false });
+    if (term) q = q.or(`title.ilike.%${term}%,category.ilike.%${term}%,tags.ilike.%${term}%,related_ref.ilike.%${term}%`);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createArchiveCard(a) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('archive_cards').insert({ ...a, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_archive_card', 'archive_cards', data.id, { doc_num: a.doc_num });
+    return data;
+  },
+  async deleteArchiveCard(id, title) {
+    const { error } = await sb.from('archive_cards').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_archive_card', 'archive_cards', id, { title });
+  },
+
+  // ── الأعمال والمهام ─────────────────────────────
+  async listTasks(status = null) {
+    let q = sb.from('tasks').select('*, profiles(full_name)').order('due_date', { ascending: true, nullsFirst: false });
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createTask(t) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('tasks').insert({ ...t, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_task', 'tasks', data.id, { title: t.title });
+    return data;
+  },
+  async updateTaskStatus(id, status) {
+    const { error } = await sb.from('tasks').update({ status }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_task_status', 'tasks', id, { status });
+  },
+  async deleteTask(id, title) {
+    const { error } = await sb.from('tasks').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_task', 'tasks', id, { title });
+  },
+
+  // ── التأجير ─────────────────────────────
+  async listRentalItems() {
+    const { data, error } = await sb.from('rental_items').select('*, customers(name)').order('start_date', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createRentalItem(r) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('rental_items').insert({ ...r, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_rental_item', 'rental_items', data.id, { doc_num: r.doc_num });
+    return data;
+  },
+  async updateRentalStatus(id, status) {
+    const { error } = await sb.from('rental_items').update({ status }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_rental_status', 'rental_items', id, { status });
+  },
+  async deleteRentalItem(id, docNum) {
+    const { error } = await sb.from('rental_items').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_rental_item', 'rental_items', id, { doc_num: docNum });
+  },
+
+  // ── التصنيع: نموذج تصنيع (BOM) ─────────────────────────────
+  async listManufacturingModels() {
+    const { data, error } = await sb.from('manufacturing_models')
+      .select('*, materials(store_num,name,unit), manufacturing_model_components(id, qty_per_batch, materials(id,store_num,name,unit))')
+      .eq('is_active', true).order('name');
+    if (error) throw error; return data;
+  },
+  async createManufacturingModel(header, components) {
+    const { data: model, error: e1 } = await sb.from('manufacturing_models').insert(header).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('manufacturing_model_components').insert(components.map(c => ({ ...c, model_id: model.id })));
+    if (e2) { await sb.from('manufacturing_models').delete().eq('id', model.id); throw friendlyDbError(e2); }
+    await this.log('create_manufacturing_model', 'manufacturing_models', model.id, { code: header.code, components: components.length });
+    return model;
+  },
+  async deactivateManufacturingModel(id) {
+    const { error } = await sb.from('manufacturing_models').update({ is_active: false }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('deactivate_manufacturing_model', 'manufacturing_models', id, {});
+  },
+
+  // ── التصنيع: طلبية تصنيع ─────────────────────────────
+  async listManufacturingOrders() {
+    const { data, error } = await sb.from('manufacturing_orders')
+      .select('*, manufacturing_models(name, materials(store_num,name,unit)), warehouses(name)')
+      .order('order_date', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createManufacturingOrder(o) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('manufacturing_orders').insert({ ...o, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_manufacturing_order', 'manufacturing_orders', data.id, { doc_num: o.doc_num });
+    return data;
+  },
+  // تنفيذ طلبية التصنيع: يستهلك المكوّنات (وثيقة إصدار) وينتج المادة الجاهزة (وثيقة استلام)
+  // بنفس الآلية الآمنة المستخدمة أصلاً بالفواتير (بلا لمس material_stock مباشرة) —
+  // كلفة الإنتاج = التكلفة الفعلية للمكوّنات المستهلَكة (بمتوسط تكلفتها وقت الاستهلاك) ÷ الكمية المنتَجة.
+  async completeManufacturingOrder(orderId) {
+    const { data: order, error: e0 } = await sb.from('manufacturing_orders')
+      .select('*, manufacturing_models(output_material_id, output_qty_per_batch, manufacturing_model_components(material_id, qty_per_batch))')
+      .eq('id', orderId).single();
+    if (e0) throw e0;
+    if (order.status !== 'planned') throw new Error('الطلبية ليست بحالة "مخطَّطة"');
+    const model = order.manufacturing_models;
+    const outputQty = Number(model.output_qty_per_batch) * Number(order.batches);
+    const session = await this.currentSession();
+
+    // 1) استهلاك المكوّنات (وثيقة إصدار من نفس المخزن)
+    const consumeItems = model.manufacturing_model_components.map(c => ({ material_id: c.material_id, qty: Number(c.qty_per_batch) * Number(order.batches) }));
+    const issueDoc = await this.createIssue({
+      doc_num: 'MFG-CONS-' + order.doc_num, doc_date: todayISO(), warehouse_id: order.warehouse_id,
+      recipient_type: 'production', recipient_name: 'استهلاك تصنيع: ' + order.doc_num, recipient_person: '',
+      notes: 'استهلاك مكوّنات طلبية تصنيع رقم ' + order.doc_num, created_by: session?.user?.id,
+    }, consumeItems);
+
+    // 2) حساب التكلفة الفعلية من أسعار الإصدار المُرحَّلة تلقائياً (متوسط التكلفة وقت الاستهلاك)
+    const consumedItems = await this.issueItems(issueDoc.id);
+    const totalCost = consumedItems.reduce((s, it) => s + Number(it.qty) * Number(it.unit_price || 0), 0);
+    const unitCost = outputQty > 0 ? totalCost / outputQty : 0;
+
+    // 3) إنتاج المادة الجاهزة (وثيقة استلام لنفس المخزن بكلفة الإنتاج الفعلية)
+    const receiptDoc = await this.createReceipt({
+      doc_num: 'MFG-PROD-' + order.doc_num, doc_date: todayISO(), warehouse_id: order.warehouse_id,
+      supplier: '', purchase_ref: 'تصنيع: ' + order.doc_num, notes: 'إنتاج طلبية تصنيع رقم ' + order.doc_num, created_by: session?.user?.id,
+    }, [{ material_id: model.output_material_id, qty: outputQty, unit_price: unitCost }]);
+
+    const { error: e3 } = await sb.from('manufacturing_orders').update({
+      status: 'completed', completed_date: todayISO(), consumption_issue_doc_id: issueDoc.id,
+      production_receipt_doc_id: receiptDoc.id, actual_cost: totalCost,
+    }).eq('id', orderId);
+    if (e3) throw friendlyDbError(e3);
+    await this.log('complete_manufacturing_order', 'manufacturing_orders', orderId, { totalCost, outputQty });
+    return { totalCost, unitCost, outputQty };
+  },
+  async cancelManufacturingOrder(id) {
+    const { error } = await sb.from('manufacturing_orders').update({ status: 'cancelled' }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('cancel_manufacturing_order', 'manufacturing_orders', id, {});
+  },
 };
 
 window.DB = DB;
