@@ -151,104 +151,57 @@ window.runExportSync = async () => {
 };
 
 // ── الاستيراد من اكسل (دليل المواد) — يقبل أي تصميم ملف، ويحلل عناوين الأعمدة تلقائياً ─────────────────────────────
-// كل حقل مطلوب له قائمة مرادفات عربية/إنجليزية شائعة؛ يُقارَن عنوان كل عمود بالملف
-// معها (بعد تطبيع النص: إزالة المسافات/التشكيل وتوحيد الحالة) لاكتشاف أقرب تطابق.
-const XLS_FIELD_ALIASES = {
-  store_num: ['store_num','storenum','رقم مخزني','الرقم المخزني','رقم المادة','رقم الصنف','كود','كود المادة','code','sku','item code','رمز','رمز المادة'],
-  name: ['name','الاسم','اسم المادة','اسم الصنف','المادة','item name','description','الوصف','التسمية'],
-  unit: ['unit','الوحدة','وحدة','uom','وحدة القياس'],
-  category: ['category','التصنيف','تصنيف','الصنف','type','فئة','المجموعة','group'],
-  min_qty: ['min_qty','minqty','الحد الأدنى','حد ادنى','حد الطلب','نقطة اعادة الطلب','reorder','reorder point','minimum','الحد الادنى للطلب'],
-  barcode: ['barcode','باركود','الباركود','رمز الباركود'],
-};
-const XLS_FIELD_LABELS = { store_num: 'الرقم المخزني', name: 'الاسم', unit: 'الوحدة', category: 'التصنيف', min_qty: 'الحد الأدنى', barcode: 'الباركود', __ignore: 'تجاهل هذا العمود' };
-function normalizeHeader(h) {
-  return String(h || '').trim().toLowerCase().replace(/[\u064B-\u065F]/g, '').replace(/\s+/g, ' ');
-}
-function autoDetectXlsMapping(headers) {
-  const mapping = {};
-  headers.forEach(h => {
-    const norm = normalizeHeader(h);
-    let matched = null;
-    for (const [field, aliases] of Object.entries(XLS_FIELD_ALIASES)) {
-      if (aliases.some(a => normalizeHeader(a) === norm)) { matched = field; break; }
-    }
-    if (!matched) { // مطابقة جزئية احتياطية إن لم يوجد تطابق تام
-      for (const [field, aliases] of Object.entries(XLS_FIELD_ALIASES)) {
-        if (aliases.some(a => norm.includes(normalizeHeader(a)) || normalizeHeader(a).includes(norm))) { matched = field; break; }
-      }
-    }
-    mapping[h] = matched || '__ignore';
-  });
-  return mapping;
-}
-let __xlsParsedRows = null, __xlsHeaders = null;
+// عناصر الاستيراد الخاصة بدليل المواد (تُستخدم من هذه الصفحة، ومن "دليل المواد" مباشرة عبر renderMaterialsExcelImportCard)
+const MATERIALS_XLS_FIELDS = ['store_num', 'name', 'unit', 'category', 'min_qty', 'barcode', 'notes'];
 
-PAGE_RENDER.excelimport = async (root) => {
-  root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">الاستيراد من اكسل</div><div class="ph-sub">استيراد مواد دفعة واحدة — يقبل أي تصميم ملف، ويحلل عناوين الأعمدة تلقائياً</div></div></div>
-    <div class="card">
-      <div class="ph-sub" style="margin-bottom:10px">ارفع الملف بأي ترتيب/تسمية أعمدة تريدها — النظام يحلل عناوين الصف الأول ويقترح لكل عمود الحقل المناسب، وتقدر تعدّل أي اقتراح قبل الاستيراد.</div>
-      <input type="file" id="xls-file" accept=".xlsx,.xls,.csv">
-      <div class="form-foot"><button class="btn btn-p" onclick="analyzeExcelFile()">تحليل الملف</button></div>
-      <div id="xls-mapping"></div>
-      <div id="xls-result"></div>
-    </div>`;
-};
+// يبني بطاقة استيراد إكسل كاملة (رفع + تحليل + مطابقة + استيراد) داخل أي حاوية DOM بمعرّف idPrefix فريد —
+// يُستخدم بصفحة "الاستيراد من اكسل" وبصفحة "دليل المواد" مباشرة بنفس المنطق دون تكرار الكود.
+function renderMaterialsExcelImportCard(idPrefix) {
+  return `<div class="card">
+    <div class="ph-sub" style="margin-bottom:10px">ارفع أي ملف إكسل بأي ترتيب/تسمية أعمدة — النظام يحلل عناوين الصف الأول ويقترح لكل عمود الحقل المناسب، وتقدر تعدّل أي اقتراح قبل الاستيراد.</div>
+    <input type="file" id="${idPrefix}-file" accept=".xlsx,.xls,.csv">
+    <div class="form-foot"><button class="btn btn-p" onclick="analyzeMaterialsExcel('${idPrefix}')">تحليل الملف</button></div>
+    <div id="${idPrefix}-mapping"></div>
+    <div id="${idPrefix}-result"></div>
+  </div>`;
+}
+window.__xlsState = {}; // { [idPrefix]: { headers, rows } } — يدعم أكثر من بطاقة استيراد بنفس الصفحة إن لزم
 
-window.analyzeExcelFile = async () => {
-  const fileInput = document.getElementById('xls-file');
-  const box = document.getElementById('xls-mapping');
+window.analyzeMaterialsExcel = async (idPrefix) => {
+  const fileInput = document.getElementById(idPrefix + '-file');
+  const box = document.getElementById(idPrefix + '-mapping');
   if (!fileInput.files.length) { toast('اختر ملف إكسل أولاً', 'e'); return; }
   box.innerHTML = '<div class="ec">جارِ التحليل...</div>';
   try {
-    const file = fileInput.files[0];
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    __xlsParsedRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-    if (!__xlsParsedRows.length) { box.innerHTML = '<div class="ec">الملف فارغ أو بلا بيانات قابلة للقراءة</div>'; return; }
-    __xlsHeaders = Object.keys(__xlsParsedRows[0]);
-    const mapping = autoDetectXlsMapping(__xlsHeaders);
+    const { headers, rows } = await xlsReadFile(fileInput.files[0]);
+    window.__xlsState[idPrefix] = { headers, rows };
+    const mapping = xlsAutoDetectMapping(headers, MATERIALS_XLS_FIELDS);
     const requiredOk = Object.values(mapping).includes('store_num') && Object.values(mapping).includes('name');
-
     box.innerHTML = `
-      <div class="card-title" style="margin-top:16px">مطابقة الأعمدة (${__xlsParsedRows.length} صف مكتشَف) — عدّل أي اقتراح غير صحيح</div>
-      <div class="itw"><table><thead><tr><th>عمود الملف</th><th>عيّنة من القيم</th><th>يُستخدم كـ</th></tr></thead>
-      <tbody>${__xlsHeaders.map(h => {
-        const sample = __xlsParsedRows.slice(0, 3).map(r => r[h]).filter(v => v !== '').join('، ');
-        return `<tr><td class="mono">${h}</td><td class="ph-sub">${sample || '—'}</td>
-        <td><select id="xls-map-${cssSafeId(h)}" data-header="${h.replace(/"/g,'&quot;')}">
-          ${Object.entries(XLS_FIELD_LABELS).map(([val, label]) => `<option value="${val}" ${mapping[h]===val?'selected':''}>${label}</option>`).join('')}
-        </select></td></tr>`;
-      }).join('')}</tbody></table></div>
+      <div class="card-title" style="margin-top:16px">مطابقة الأعمدة (${rows.length} صف مكتشَف) — عدّل أي اقتراح غير صحيح</div>
+      ${xlsRenderMappingTable(headers, rows, MATERIALS_XLS_FIELDS, mapping, idPrefix + '-map')}
       ${!requiredOk ? '<div class="ec" style="color:var(--warn)">تنبيه: لم يُكتشَف عمود "الرقم المخزني" و/أو "الاسم" تلقائياً — تأكد من تعيينهما يدوياً بالقائمة أعلاه، فهما إلزاميان.</div>' : ''}
-      <div class="form-foot"><button class="btn btn-p" onclick="runExcelImport()">استيراد بهذه المطابقة</button></div>`;
+      <div class="form-foot"><button class="btn btn-p" onclick="runMaterialsExcelImport('${idPrefix}')">استيراد بهذه المطابقة</button></div>`;
   } catch (e) { box.innerHTML = `<div class="ec">تعذر تحليل الملف: ${e.message}</div>`; }
 };
-function cssSafeId(s) { return String(s).replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_'); }
 
-window.runExcelImport = async () => {
-  const box = document.getElementById('xls-result');
-  if (!__xlsParsedRows) { toast('حلّل الملف أولاً', 'e'); return; }
-  // اقرأ المطابقة النهائية التي اختارها/عدّلها المستخدم من القوائم المنسدلة
-  const fieldByHeader = {};
-  __xlsHeaders.forEach(h => {
-    const sel = document.getElementById('xls-map-' + cssSafeId(h));
-    if (sel && sel.value !== '__ignore') fieldByHeader[h] = sel.value;
-  });
-  const headerByField = {}; Object.entries(fieldByHeader).forEach(([h, f]) => { headerByField[f] = h; });
+window.runMaterialsExcelImport = async (idPrefix) => {
+  const box = document.getElementById(idPrefix + '-result');
+  const state = window.__xlsState[idPrefix];
+  if (!state) { toast('حلّل الملف أولاً', 'e'); return; }
+  const headerByField = xlsReadMapping(state.headers, idPrefix + '-map');
   if (!headerByField.store_num || !headerByField.name) { toast('يجب تعيين عمودي "الرقم المخزني" و"الاسم" على الأقل', 'e'); return; }
 
   box.innerHTML = '<div class="ec">جارِ الاستيراد...</div>';
   try {
-    const rows = __xlsParsedRows.map(r => ({
+    const rows = state.rows.map(r => ({
       store_num: String(r[headerByField.store_num] || '').trim(),
       name: String(r[headerByField.name] || '').trim(),
-      unit: headerByField.unit ? String(r[headerByField.unit] || 'قطعة').trim() || 'قطعة' : 'قطعة',
+      unit: headerByField.unit ? (String(r[headerByField.unit] || 'قطعة').trim() || 'قطعة') : 'قطعة',
       category: headerByField.category && r[headerByField.category] ? String(r[headerByField.category]).trim() : null,
       min_qty: headerByField.min_qty && r[headerByField.min_qty] ? Number(r[headerByField.min_qty]) : 0,
       barcode: headerByField.barcode && r[headerByField.barcode] ? String(r[headerByField.barcode]).trim() : null,
+      notes: headerByField.notes && r[headerByField.notes] ? String(r[headerByField.notes]).trim() : null,
       is_active: true,
     })).filter(r => r.store_num && r.name);
     if (!rows.length) { box.innerHTML = '<div class="ec">لا توجد صفوف صالحة بعد المطابقة — تحقق من القيم بعمودي الرقم المخزني والاسم</div>'; return; }
@@ -258,7 +211,14 @@ window.runExcelImport = async () => {
       <div class="stat ${res.fail?'danger':''}"><div class="stat-lbl">فشل</div><div class="stat-val danger">${res.fail}</div></div></div>
       ${res.errors.length ? `<div class="ec" style="color:var(--danger);text-align:right;padding:10px">${res.errors.join('<br>')}</div>` : ''}`;
     toast(`تم استيراد ${res.ok} مادة${res.fail ? '، وفشل ' + res.fail : ''}`, res.fail ? 'e' : 's');
+    if (window.__afterMaterialsImport) window.__afterMaterialsImport();
   } catch (e) { box.innerHTML = `<div class="ec">تعذر الاستيراد: ${e.message}</div>`; }
+};
+
+PAGE_RENDER.excelimport = async (root) => {
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">الاستيراد من اكسل</div><div class="ph-sub">استيراد مواد دفعة واحدة — يقبل أي تصميم ملف، ويحلل عناوين الأعمدة تلقائياً</div></div></div>
+    ${renderMaterialsExcelImportCard('xls-main')}`;
 };
 
 // ── تحديث الاتصال بالشبكة: تشخيص الاتصال بقاعدة البيانات ─────────────────────────────

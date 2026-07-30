@@ -70,7 +70,7 @@ async function addPettyCashRow() {
   tbody.insertAdjacentHTML('beforeend', pcItemRowHTML());
   const row = tbody.lastElementChild;
 
-  const whs = await DB.listWarehouses();
+  const whs = scopedWarehouses(await DB.listWarehouses());
   const accs = await DB.chartOfAccounts();
   const whSel = row.querySelector('.pc-wh');
   whSel.insertAdjacentHTML('beforeend', whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join(''));

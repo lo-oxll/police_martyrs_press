@@ -1,6 +1,86 @@
 // ══════════════════════════════════════════════════════════════════
 //  التطبيق الرئيسي: أدوات مشتركة + التوجيه بين الصفحات + الإقلاع
 // ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+//  أداة استيراد إكسل ذكية عامة — تُستخدم من أي صفحة (دليل المواد، أرصدة
+//  التدوير، اعدادات البرنامج...) لقبول أي تصميم ملف وتحليل عناوين أعمدته
+//  تلقائياً بدل اشتراط ترتيب/تسمية أعمدة ثابتة.
+// ══════════════════════════════════════════════════════════════════
+const XLS_COMMON_ALIASES = {
+  store_num: ['store_num','storenum','رقم مخزني','الرقم المخزني','رقم المادة','رقم الصنف','كود','كود المادة','code','sku','item code','رمز','رمز المادة'],
+  name: ['name','الاسم','اسم المادة','اسم الصنف','المادة','item name','description','الوصف','التسمية'],
+  unit: ['unit','الوحدة','وحدة','uom','وحدة القياس'],
+  category: ['category','التصنيف','تصنيف','الصنف','type','فئة','المجموعة','group'],
+  min_qty: ['min_qty','minqty','الحد الأدنى','حد ادنى','حد الطلب','نقطة اعادة الطلب','reorder','reorder point','minimum','الحد الادنى للطلب'],
+  barcode: ['barcode','باركود','الباركود','رمز الباركود'],
+  qty: ['qty','quantity','الكمية','كمية','الكميه','الكمية الافتتاحية'],
+  unit_price: ['unit_price','price','cost','السعر','سعر الوحدة','سعر','التكلفة','سعر الشراء','سعر الكلفة'],
+  notes: ['notes','note','ملاحظات','ملاحظة','الملاحظات','remarks'],
+};
+const XLS_FIELD_LABELS_ALL = {
+  store_num: 'الرقم المخزني', name: 'الاسم', unit: 'الوحدة', category: 'التصنيف', min_qty: 'الحد الأدنى',
+  barcode: 'الباركود', qty: 'الكمية', unit_price: 'السعر/التكلفة', notes: 'ملاحظات', __ignore: 'تجاهل هذا العمود',
+};
+function xlsNormalizeHeader(h) {
+  return String(h || '').trim().toLowerCase().replace(/[\u064B-\u065F]/g, '').replace(/\s+/g, ' ');
+}
+// fields: مصفوفة أسماء الحقول المطلوبة بهذا الاستيراد تحديداً (مثال: ['store_num','name','unit'])
+function xlsAutoDetectMapping(headers, fields) {
+  const mapping = {};
+  headers.forEach(h => {
+    const norm = xlsNormalizeHeader(h);
+    let matched = null;
+    for (const field of fields) {
+      const aliases = XLS_COMMON_ALIASES[field] || [];
+      if (aliases.some(a => xlsNormalizeHeader(a) === norm)) { matched = field; break; }
+    }
+    if (!matched) {
+      for (const field of fields) {
+        const aliases = XLS_COMMON_ALIASES[field] || [];
+        if (aliases.some(a => norm.includes(xlsNormalizeHeader(a)) || xlsNormalizeHeader(a).includes(norm))) { matched = field; break; }
+      }
+    }
+    mapping[h] = matched || '__ignore';
+  });
+  return mapping;
+}
+function xlsCssSafeId(s) { return String(s).replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_'); }
+// يقرأ أي ملف إكسل/CSV بأي تصميم أعمدة ويرجّع {headers, rows} — لا يرفض أي ملف طالما فيه صف عناوين وصف بيانات واحد على الأقل
+async function xlsReadFile(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  if (!rows.length) throw new Error('الملف فارغ أو بلا بيانات قابلة للقراءة');
+  return { headers: Object.keys(rows[0]), rows };
+}
+// يبني جدول HTML لمطابقة الأعمدة (عمود الملف + عيّنة قيم + قائمة اختيار الحقل)، معرَّف بـ idPrefix فريد لكل استخدام بنفس الصفحة
+function xlsRenderMappingTable(headers, rows, fields, mapping, idPrefix) {
+  return `<div class="itw"><table><thead><tr><th>عمود الملف</th><th>عيّنة من القيم</th><th>يُستخدم كـ</th></tr></thead>
+    <tbody>${headers.map(h => {
+      const sample = rows.slice(0, 3).map(r => r[h]).filter(v => v !== '').join('، ');
+      const options = [...fields, '__ignore'];
+      return `<tr><td class="mono">${h}</td><td class="ph-sub">${sample || '—'}</td>
+      <td><select id="${idPrefix}-${xlsCssSafeId(h)}" data-header="${h.replace(/"/g,'&quot;')}">
+        ${options.map(val => `<option value="${val}" ${mapping[h]===val?'selected':''}>${XLS_FIELD_LABELS_ALL[val]||val}</option>`).join('')}
+      </select></td></tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+// يقرأ المطابقة النهائية التي اختارها/عدّلها المستخدم من القوائم المنسدلة، يرجّع { field: headerName }
+function xlsReadMapping(headers, idPrefix) {
+  const headerByField = {};
+  headers.forEach(h => {
+    const sel = document.getElementById(idPrefix + '-' + xlsCssSafeId(h));
+    if (sel && sel.value !== '__ignore') headerByField[sel.value] = h;
+  });
+  return headerByField;
+}
+window.xlsReadFile = xlsReadFile;
+window.xlsAutoDetectMapping = xlsAutoDetectMapping;
+window.xlsRenderMappingTable = xlsRenderMappingTable;
+window.xlsReadMapping = xlsReadMapping;
+window.xlsCssSafeId = xlsCssSafeId;
+
 const gv = id => (document.getElementById(id)?.value ?? '').trim();
 const sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
 // المبالغ بالدينار العراقي — بدون فاصلة عشرية (لا يوجد تعامل عملي بكسور الدينار)
@@ -50,12 +130,24 @@ window.can = can;
 // صلاحية الخزينة والرواتب والسلفة المستديمة: مدير النظام دائماً، أو محاسب مُفعَّل له can_treasury تحديداً
 function canTreasury() { return ME && (ME.role === 'admin' || (ME.role === 'accountant' && ME.can_treasury)); }
 window.canTreasury = canTreasury;
-// تقييد قائمة المخازن حسب نطاق المحاسب (NULL/غير محاسب = بدون تقييد)
+// تقييد قائمة المخازن حسب نطاق المحاسب (warehouse_ids) ونطاق الفرع (branch_ids) — أي منهما NULL/فارغ = بدون تقييد بذلك البعد
 function scopedWarehouses(all) {
-  if (!ME || ME.role !== 'accountant' || !ME.warehouse_ids || !ME.warehouse_ids.length) return all;
-  return all.filter(w => ME.warehouse_ids.includes(w.id));
+  let list = all;
+  if (ME && ME.role === 'accountant' && ME.warehouse_ids && ME.warehouse_ids.length) {
+    list = list.filter(w => ME.warehouse_ids.includes(w.id));
+  }
+  if (ME && ME.branch_ids && ME.branch_ids.length) {
+    list = list.filter(w => !w.branch_id || ME.branch_ids.includes(w.branch_id));
+  }
+  return list;
 }
 window.scopedWarehouses = scopedWarehouses;
+// تقييد قائمة الفروع الظاهرة للمستخدم حسب branch_ids (بدون تحديد = كل الفروع)
+function scopedBranches(all) {
+  if (!ME || !ME.branch_ids || !ME.branch_ids.length) return all;
+  return all.filter(b => ME.branch_ids.includes(b.id));
+}
+window.scopedBranches = scopedBranches;
 
 // ══════════════════════════════════════════════════════════════════
 //  القائمة العلوية (Mega Menu) — المرحلة ١: هيكل تنقّل كامل

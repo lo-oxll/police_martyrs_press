@@ -4,7 +4,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 async function warehouseFilterOptions() {
-  return DB.listWarehouses();
+  return scopedWarehouses(await DB.listWarehouses());
 }
 function monthStart() { return todayISO().slice(0, 8) + '01'; }
 

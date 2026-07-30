@@ -60,15 +60,17 @@ const DB = {
     await this.log('hard_delete_user', 'profiles', id, { name });
   },
   // تحديد نطاق مخازن محاسب معيّن + صلاحية الخزينة والرواتب — مدير النظام فقط (عبر RLS)
-  async updateProfileScope(id, { warehouse_ids, can_treasury }) {
-    const { error } = await sb.from('profiles').update({ warehouse_ids, can_treasury }).eq('id', id);
+  async updateProfileScope(id, { warehouse_ids, can_treasury, branch_ids }) {
+    const patch = { warehouse_ids, can_treasury };
+    if (branch_ids !== undefined) patch.branch_ids = branch_ids;
+    const { error } = await sb.from('profiles').update(patch).eq('id', id);
     if (error) throw friendlyDbError(error);
-    await this.log('update_profile_scope', 'profiles', id, { warehouse_ids, can_treasury });
+    await this.log('update_profile_scope', 'profiles', id, patch);
   },
 
   // ── مخازن ─────────────────────────────
   async listWarehouses() {
-    const { data, error } = await sb.from('warehouses').select('*').eq('is_active', true).order('code');
+    const { data, error } = await sb.from('warehouses').select('*, branches(name)').eq('is_active', true).order('code');
     if (error) throw error; return data;
   },
   async createWarehouse(w) {

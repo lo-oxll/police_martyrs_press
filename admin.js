@@ -69,21 +69,27 @@ window.rejectPendingUser = async (id, name) => {
 };
 // تحديد صلاحيات محاسب محدَّد: أي مخازن يشتغل عليها، وهل له صلاحية الخزينة والرواتب
 window.openScopeModal = async (u) => {
-  const whs = await DB.listWarehouses();
+  const [whs, branches] = await Promise.all([DB.listWarehouses(), DB.listBranches()]);
   const current = new Set(u.warehouse_ids || []);
+  const currentBranches = new Set(u.branch_ids || []);
   showModal(`صلاحيات: ${u.full_name}`, `
     <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">اترك كل المخازن بدون تحديد ليشتغل عليها كلها بدون قيد.</div>
     <div class="fgroup" style="margin-bottom:14px">
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-scope-treasury" style="width:auto" ${u.can_treasury?'checked':''}> صلاحية الخزينة والرواتب والسلفة المستديمة (صندوق المركز، الرواتب، الموظفين، سلف الموظفين)</label>
     </div>
     <label style="font-size:11px;color:var(--ink2);font-weight:600;display:block;margin-bottom:6px">المخازن المسموح بها (بدون تحديد = الكل)</label>
-    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+    <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:14px">
       ${whs.map(w => `<label style="display:flex;align-items:center;gap:6px;padding:5px 0"><input type="checkbox" class="m-scope-wh" value="${w.id}" style="width:auto" ${current.has(w.id)?'checked':''}> ${w.code} — ${w.name}</label>`).join('') || '<div class="ec">لا توجد مخازن</div>'}
+    </div>
+    <label style="font-size:11px;color:var(--ink2);font-weight:600;display:block;margin-bottom:6px">الفروع المسموح بها (بدون تحديد = الكل) — تُستخدم لتصفية شاشات اختيار الفرع تطبيقياً</label>
+    <div style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+      ${branches.map(b => `<label style="display:flex;align-items:center;gap:6px;padding:5px 0"><input type="checkbox" class="m-scope-branch" value="${b.id}" style="width:auto" ${currentBranches.has(b.id)?'checked':''}> ${b.code} — ${b.name}</label>`).join('') || '<div class="ec">لا توجد فروع مسجّلة بعد</div>'}
     </div>
   `, async () => {
     const selected = [...document.querySelectorAll('.m-scope-wh:checked')].map(el => el.value);
+    const selectedBranches = [...document.querySelectorAll('.m-scope-branch:checked')].map(el => el.value);
     try {
-      await DB.updateProfileScope(u.id, { warehouse_ids: selected.length ? selected : null, can_treasury: document.getElementById('m-scope-treasury').checked });
+      await DB.updateProfileScope(u.id, { warehouse_ids: selected.length ? selected : null, can_treasury: document.getElementById('m-scope-treasury').checked, branch_ids: selectedBranches.length ? selectedBranches : null });
       toast('تم حفظ الصلاحيات', 's'); go('users'); return true;
     } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
   });

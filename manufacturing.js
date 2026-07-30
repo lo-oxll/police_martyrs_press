@@ -99,7 +99,7 @@ PAGE_RENDER.mfgorder = async (root) => {
     </tbody></table></div></div>`;
 };
 window.openMfgOrderModal = async () => {
-  const [models, warehouses] = await Promise.all([DB.listManufacturingModels(), DB.listWarehouses()]);
+  const [models, warehouses] = await Promise.all([DB.listManufacturingModels(), DB.listWarehouses().then(scopedWarehouses)]);
   if (!models.length) { toast('أنشئ نموذج تصنيع (BOM) أولاً قبل إصدار طلبية', 'e'); return; }
   showModal('طلبية تصنيع جديدة', `
     <div class="fg2">

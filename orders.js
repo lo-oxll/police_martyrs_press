@@ -27,7 +27,7 @@ PAGE_RENDER.salespurchaseorders = async (root) => {
 };
 
 window.openOrderModal = async (orderType) => {
-  const [warehouses, customers] = await Promise.all([DB.listWarehouses(), orderType === 'sale' ? DB.listCustomers() : []]);
+  const [warehouses, customers] = await Promise.all([DB.listWarehouses().then(scopedWarehouses), orderType === 'sale' ? DB.listCustomers() : []]);
   let items = [];
   const renderItemsTable = () => items.map((it, i) => `<tr><td>${it.label}</td><td class="mono">${fmtQty(it.qty)}</td><td class="mono">${fmt(it.unit_price)}</td>
     <td><button class="btn btn-d btn-sm" onclick="removeOrderModalItem(${i})">✕</button></td></tr>`).join('') || '<tr><td colspan="4" class="ec">لم تُضَف مواد بعد</td></tr>';

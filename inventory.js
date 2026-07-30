@@ -135,33 +135,38 @@ async function renderDashboardCharts(months = 6) {
 
 // ── المخازن ──────────────────────────────
 PAGE_RENDER.warehouses = async (root) => {
-  const whs = await DB.listWarehouses();
+  const [whs, branches] = await Promise.all([DB.listWarehouses(), DB.listBranches()]);
+  window.__whBranchesCache = branches;
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">المخازن</div><div class="ph-sub">إدارة مواقع التخزين</div></div>
       <div class="ph-actions"><button class="btn btn-p" onclick="openWhModal()">+ مخزن جديد</button></div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الرمز</th><th>الاسم</th><th>الموقع</th><th></th></tr></thead><tbody>
-      ${whs.map(w => `<tr><td class="mono">${w.code}</td><td>${w.name}</td><td>${w.location || '—'}</td>
+    <div class="card"><div class="itw"><table><thead><tr><th>الرمز</th><th>الاسم</th><th>الموقع</th><th>الفرع</th><th></th></tr></thead><tbody>
+      ${whs.map(w => `<tr><td class="mono">${w.code}</td><td>${w.name}</td><td>${w.location || '—'}</td><td>${w.branches?.name || '<span class="ph-sub">غير مخصَّص</span>'}</td>
         <td>
           <button class="btn btn-o btn-sm" onclick='openWhModal(${JSON.stringify(w).replace(/'/g,"&#39;")})'>تعديل</button>
           <button class="btn btn-d btn-sm" onclick="deleteWarehouseConfirm('${w.id}', '${(w.name||'').replace(/'/g,"\\'")}')">حذف</button>
           ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="hardDeleteWarehouseConfirm('${w.id}', '${(w.name||'').replace(/'/g,"\\'")}')">🗑 حذف نهائي</button>` : ''}
-        </td></tr>`).join('') || '<tr><td colspan="4" class="ec">لا توجد مخازن مسجّلة</td></tr>'}
+        </td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد مخازن مسجّلة</td></tr>'}
     </tbody></table></div></div>`;
 };
 window.openWhModal = (w = null) => {
+  const branches = window.__whBranchesCache || [];
   showModal(w ? 'تعديل مخزن' : 'مخزن جديد', `
     <div class="fgroup" style="margin-bottom:10px"><label>رمز المخزن *</label><input id="m-wh-code" value="${w?.code || ''}"></div>
     <div class="fgroup" style="margin-bottom:10px"><label>اسم المخزن *</label><input id="m-wh-name" value="${w?.name || ''}"></div>
     <div class="fgroup" style="margin-bottom:10px"><label>الموقع</label><input id="m-wh-loc" value="${w?.location || ''}"></div>
+    <div class="fgroup" style="margin-bottom:10px"><label>الفرع (اختياري)</label>
+      <select id="m-wh-branch"><option value="">— غير مخصَّص —</option>${branches.map(b => `<option value="${b.id}" ${w?.branch_id===b.id?'selected':''}>${b.name}</option>`).join('')}</select></div>
   `, async () => {
     const code = gv('m-wh-code'), name = gv('m-wh-name');
     if (!code || !name) { toast('الرمز والاسم مطلوبان', 'e'); return false; }
+    const branch_id = gv('m-wh-branch') || null;
     try {
       if (w) {
-        await DB.updateWarehouse(w.id, { code, name, location: gv('m-wh-loc') });
+        await DB.updateWarehouse(w.id, { code, name, location: gv('m-wh-loc'), branch_id });
         toast('تم تحديث بيانات المخزن', 's');
       } else {
-        await DB.createWarehouse({ code, name, location: gv('m-wh-loc') });
+        await DB.createWarehouse({ code, name, location: gv('m-wh-loc'), branch_id });
         toast('تم إضافة المخزن', 's');
       }
       go('warehouses'); return true;
@@ -208,10 +213,10 @@ function renderMaterialsPage(root, st) {
       <div class="ph-actions">
         <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${st.term}">
         <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل (الكل)</button>
-        <button class="btn btn-o btn-sm" onclick="document.getElementById('mat-import-file').click()">⬆ استيراد إكسل</button>
-        <input type="file" id="mat-import-file" accept=".xlsx,.xls" class="hidden" onchange="importMaterialsExcel(this.files[0])">
+        <button class="btn btn-o btn-sm" onclick="document.getElementById('mat-xls-panel').classList.toggle('hidden')">⬆ استيراد إكسل</button>
         <button class="btn btn-p" onclick="openMatModal()">+ مادة جديدة</button>
       </div></div>
+    <div id="mat-xls-panel" class="hidden" style="margin-bottom:16px">${renderMaterialsExcelImportCard('mat-xls')}</div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
       ${st.items.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
         <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button>
@@ -221,6 +226,7 @@ function renderMaterialsPage(root, st) {
     ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreMaterials(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
     </div>`;
   document.getElementById('mat-search').addEventListener('input', debounce(e => PAGE_RENDER.materials(root, e.target.value), 300));
+  window.__afterMaterialsImport = () => PAGE_RENDER.materials(root, st.term);
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
@@ -238,39 +244,6 @@ window.exportMaterialsExcel = async () => {
 
 // ── استيراد دليل المواد من إكسل ──────────────────────────────
 // الأعمدة المتوقعة (بالترتيب أو بالاسم): الرقم المخزني | اسم المادة | الوحدة | التصنيف | حد إعادة الطلب | ملاحظات
-window.importMaterialsExcel = async (file) => {
-  if (!file) return;
-  try {
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    if (!rows.length) { toast('الملف فارغ', 'e'); return; }
-
-    let ok = 0, fail = 0; const errors = [];
-    for (const [i, r] of rows.entries()) {
-      const store_num = String(r['الرقم المخزني'] ?? r['store_num'] ?? '').trim();
-      const name = String(r['اسم المادة'] ?? r['الاسم'] ?? r['name'] ?? '').trim();
-      if (!store_num || !name) { fail++; errors.push(`صف ${i + 2}: الرقم المخزني أو الاسم مفقود`); continue; }
-      try {
-        await DB.upsertMaterial({
-          store_num, name,
-          unit: String(r['الوحدة'] ?? r['unit'] ?? 'قطعة').trim() || 'قطعة',
-          category: String(r['التصنيف'] ?? r['category'] ?? '').trim(),
-          min_qty: Number(r['حد إعادة الطلب'] ?? r['min_qty'] ?? 0) || 0,
-          notes: String(r['ملاحظات'] ?? r['notes'] ?? '').trim(),
-        });
-        ok++;
-      } catch (e) { fail++; errors.push(`صف ${i + 2} (${store_num}): ${e.message}`); }
-    }
-    await DB.log('import_materials', 'materials', null, { ok, fail, total: rows.length });
-    toast(`تم الاستيراد: ${ok} نجح${fail ? `، ${fail} فشل` : ''}`, fail ? 'e' : 's');
-    if (errors.length) console.warn('أخطاء الاستيراد:', errors);
-    document.getElementById('mat-import-file').value = '';
-    go('materials');
-  } catch (e) { toast('تعذر قراءة الملف: ' + e.message, 'e'); }
-};
-
 window.openMatModal = (m = null) => {
   showModal(m ? 'تعديل مادة' : 'مادة جديدة', `
     <div class="fg2" style="margin-bottom:10px">

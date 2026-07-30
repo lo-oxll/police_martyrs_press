@@ -47,12 +47,13 @@ PAGE_RENDER.fiscal = async (root) => {
         <div class="fgroup"><label>ملف الإكسل *</label><input type="file" id="ob-file" accept=".xlsx,.xls"></div>
       </div>
       <div style="font-size:11.5px;color:var(--ink3);margin-bottom:12px">
-        الأعمدة المطلوبة بالملف: <b>الرقم المخزني</b> | <b>الكمية</b> | <b>السعر</b> (أعمدة إضافية تُتجاهل). حمّل قالباً فارغاً أولاً إذا احتجت.
+        يقبل أي تصميم ملف — حلّل الملف أولاً وستظهر لك مطابقة أعمدته تلقائياً (الرقم المخزني، الكمية، السعر) وتقدر تعدّلها قبل الاستيراد.
       </div>
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="downloadOpeningBalanceTemplate()">⬇ تحميل قالب فارغ</button>
-        <button class="btn btn-p btn-sm" onclick="importOpeningBalancesForWarehouse()">⬆ استيراد الأرصدة لهذا المخزن</button>
+        <button class="btn btn-p btn-sm" onclick="analyzeOpeningBalancesExcel()">🔍 تحليل الملف</button>
       </div>
+      <div id="ob-mapping"></div>
       <div id="ob-import-result" style="margin-top:12px;font-size:12.5px"></div>
     </div>` : ''}
 
@@ -127,38 +128,56 @@ window.downloadOpeningBalanceTemplate = () => {
   XLSX.writeFile(wb, 'قالب_أرصدة_التدوير.xlsx');
 };
 
-// ── استيراد أرصدة التدوير (الافتتاحية) لمخزن واحد من ملف إكسل ──────────────────────────────
-window.importOpeningBalancesForWarehouse = async () => {
+// ── استيراد أرصدة التدوير (الافتتاحية) لمخزن واحد من ملف إكسل — يقبل أي تصميم ملف ──────────────────────────────
+const OB_XLS_FIELDS = ['store_num', 'qty', 'unit_price'];
+window.__obXlsState = null;
+
+window.analyzeOpeningBalancesExcel = async () => {
   const fyId = gv('ob-year'), whId = gv('ob-wh');
   const fileInput = document.getElementById('ob-file');
-  const file = fileInput?.files?.[0];
-  const resEl = document.getElementById('ob-import-result');
+  const box = document.getElementById('ob-mapping');
   if (!fyId || !whId) { toast('اختر السنة المالية والمخزن أولاً', 'e'); return; }
-  if (!file) { toast('اختر ملف الإكسل أولاً', 'e'); return; }
-
-  resEl.innerHTML = 'جارِ القراءة والاستيراد...';
+  if (!fileInput?.files?.length) { toast('اختر ملف الإكسل أولاً', 'e'); return; }
+  box.innerHTML = '<div class="ec">جارِ التحليل...</div>';
   try {
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    if (!rows.length) { toast('الملف فارغ', 'e'); resEl.innerHTML = ''; return; }
+    const { headers, rows } = await xlsReadFile(fileInput.files[0]);
+    window.__obXlsState = { headers, rows };
+    const mapping = xlsAutoDetectMapping(headers, OB_XLS_FIELDS);
+    const requiredOk = Object.values(mapping).includes('store_num');
+    box.innerHTML = `
+      <div class="card-title" style="margin-top:14px">مطابقة الأعمدة (${rows.length} صف مكتشَف) — عدّل أي اقتراح غير صحيح</div>
+      ${xlsRenderMappingTable(headers, rows, OB_XLS_FIELDS, mapping, 'ob-map')}
+      ${!requiredOk ? '<div class="ec" style="color:var(--warn)">تنبيه: لم يُكتشَف عمود "الرقم المخزني" تلقائياً — تأكد من تعيينه يدوياً، فهو إلزامي.</div>' : ''}
+      <div class="form-foot"><button class="btn btn-p btn-sm" onclick="runOpeningBalancesImport()">⬆ استيراد الأرصدة بهذه المطابقة</button></div>`;
+  } catch (e) { box.innerHTML = `<div class="ec">تعذر تحليل الملف: ${e.message}</div>`; }
+};
 
-    const parsed = rows.map(r => ({
-      store_num: String(r['الرقم المخزني'] ?? r['store_num'] ?? '').trim(),
-      qty: Number(r['الكمية'] ?? r['qty'] ?? 0) || 0,
-      unit_price: Number(r['السعر'] ?? r['unit_price'] ?? 0) || 0,
-    })).filter(r => r.store_num);
+window.runOpeningBalancesImport = async () => {
+  const fyId = gv('ob-year'), whId = gv('ob-wh');
+  const resEl = document.getElementById('ob-import-result');
+  if (!window.__obXlsState) { toast('حلّل الملف أولاً', 'e'); return; }
+  const headerByField = xlsReadMapping(window.__obXlsState.headers, 'ob-map');
+  if (!headerByField.store_num) { toast('يجب تعيين عمود "الرقم المخزني" على الأقل', 'e'); return; }
 
-    if (!parsed.length) { toast('لم يتم العثور على صفوف صالحة (تحقق من عمود الرقم المخزني)', 'e'); resEl.innerHTML = ''; return; }
-    if (!confirm(`سيتم استيراد ${parsed.length} صف كأرصدة افتتاحية لهذا المخزن، وسيُحدَّث رصيد المخزون الحالي لهذه المواد بهذا المخزن مباشرة. متابعة؟`)) { resEl.innerHTML = ''; return; }
+  const parsed = window.__obXlsState.rows.map(r => ({
+    store_num: String(r[headerByField.store_num] || '').trim(),
+    qty: headerByField.qty ? (Number(r[headerByField.qty]) || 0) : 0,
+    unit_price: headerByField.unit_price ? (Number(r[headerByField.unit_price]) || 0) : 0,
+  })).filter(r => r.store_num);
 
+  if (!parsed.length) { toast('لم يتم العثور على صفوف صالحة (تحقق من عمود الرقم المخزني)', 'e'); return; }
+  if (!confirm(`سيتم استيراد ${parsed.length} صف كأرصدة افتتاحية لهذا المخزن، وسيُحدَّث رصيد المخزون الحالي لهذه المواد بهذا المخزن مباشرة. متابعة؟`)) return;
+
+  resEl.innerHTML = 'جارِ الاستيراد...';
+  try {
     const result = await DB.importOpeningBalancesForWarehouse(fyId, whId, parsed);
     resEl.innerHTML = `✅ تم استيراد <b style="color:var(--ok)">${result.ok}</b> صف بنجاح${result.fail ? `، وفشل <b style="color:var(--danger)">${result.fail}</b> صف` : ''}.`;
     if (result.errors.length) {
       resEl.innerHTML += `<div style="margin-top:8px;color:var(--danger);font-size:11.5px">${result.errors.slice(0,10).map(e=>`• ${e}`).join('<br>')}${result.errors.length>10 ? '<br>...' : ''}</div>`;
     }
-    fileInput.value = '';
+    document.getElementById('ob-file').value = '';
+    document.getElementById('ob-mapping').innerHTML = '';
+    window.__obXlsState = null;
     toast('تم استيراد أرصدة التدوير للمخزن', 's');
   } catch (e) {
     resEl.innerHTML = '';
