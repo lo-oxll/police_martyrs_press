@@ -1760,6 +1760,29 @@ const DB = {
   },
 
   // ══════════════════════════════════════════════════════════════════
+  //  بطاقة قالب افتراضي: قوالب فواتير جاهزة يُعاد استخدامها بضغطة زر
+  // ══════════════════════════════════════════════════════════════════
+  async listInvoiceTemplates(docType) {
+    let q = sb.from('invoice_templates').select('*, warehouses(name), invoice_template_items(id, qty, unit_price, materials(id,store_num,name,unit))').order('created_at', { ascending: false });
+    if (docType) q = q.eq('doc_type', docType);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createInvoiceTemplate(header, items) {
+    const session = await this.currentSession();
+    const { data: tpl, error: e1 } = await sb.from('invoice_templates').insert({ ...header, created_by: session?.user?.id }).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('invoice_template_items').insert(items.map(it => ({ ...it, template_id: tpl.id })));
+    if (e2) { await sb.from('invoice_templates').delete().eq('id', tpl.id); throw friendlyDbError(e2); }
+    await this.log('create_invoice_template', 'invoice_templates', tpl.id, { name: header.name, items: items.length });
+    return tpl;
+  },
+  async deleteInvoiceTemplate(id, name) {
+    const { error } = await sb.from('invoice_templates').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_invoice_template', 'invoice_templates', id, { name });
+  },
+
+  // ══════════════════════════════════════════════════════════════════
   //  دفعة إضافية من اعدادات البرنامج: ألوان/قياسات، ماركات، خصومات، مندوبو مبيعات، شركاء أرباح، تدوير موازنة
   // ══════════════════════════════════════════════════════════════════
   // ── الألوان والقياسات ─────────────────────────────

@@ -401,7 +401,7 @@ PAGE_RENDER.receive = async (root) => {
   const whs = scopedWarehouses(await DB.listWarehouses());
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">📥 استلام مخزني</div><div class="ph-sub">تسجيل وارد جديد إلى المخزن — السعر من وصل الاستلام</div></div>
-      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('receipts')">📑 تصفح وثائق الاستلام السابقة</button></div></div>
+      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('receipts')">📑 تصفح وثائق الاستلام السابقة</button><button class="btn btn-o btn-sm" onclick="applyTemplateToForm('receive','r')">📋 تحميل من قالب</button></div></div>
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
@@ -461,7 +461,7 @@ PAGE_RENDER.issue = async (root) => {
   const whs = scopedWarehouses(await DB.listWarehouses());
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">📤 إصدار مخزني</div><div class="ph-sub">السعر يُحسب تلقائياً بالمتوسط الوزني المرجّح لحظة الحفظ</div></div>
-      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('issues')">📑 تصفح وثائق الإصدار السابقة</button></div></div>
+      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('issues')">📑 تصفح وثائق الإصدار السابقة</button><button class="btn btn-o btn-sm" onclick="applyTemplateToForm('issue','i')">📋 تحميل من قالب</button></div></div>
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
