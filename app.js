@@ -570,9 +570,12 @@ async function boot() {
     PAGE_PERM_OVERRIDES = {}; perms.forEach(p => { PAGE_PERM_OVERRIDES[p.page_id + '|' + p.role] = p.allowed; });
   } catch (e) { /* صامت */ }
   try {
-    const s = await DB.getAppSettingsBatch(['company_name', 'currency_label']);
-    if (s.company_name) { window.APP_CONFIG.APP_NAME = s.company_name; document.getElementById('sidebar')?.querySelector('.brand-name') && (document.querySelector('.brand-name').textContent = s.company_name); }
+    const s = await DB.getAppSettingsBatch(['company_name', 'currency_label', 'nav_label_overrides']);
+    if (s.company_name) { window.APP_CONFIG.APP_NAME = s.company_name; document.querySelector('.brand-name') && (document.querySelector('.brand-name').textContent = s.company_name); }
     if (s.currency_label) window.__currencyLabel = s.currency_label;
+    if (s.nav_label_overrides && window.applyNavLabelOverrides) {
+      try { window.applyNavLabelOverrides(JSON.parse(s.nav_label_overrides)); } catch (e) { /* صامت */ }
+    }
   } catch (e) { /* صامت */ }
 
   registerTopMenuHomePages();

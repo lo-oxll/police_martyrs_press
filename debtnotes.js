@@ -11,6 +11,7 @@ PAGE_RENDER.debtnotes = async (root) => {
     <tbody>${list.map(n => `<tr><td class="doc-num">${n.doc_num}</td><td class="mono">${n.issue_date}</td><td class="mono">${n.due_date||'—'}</td>
       <td>${n.customers?.name || n.counterparty_name || '—'}</td><td class="mono gold-txt">${fmtIQD(n.amount)}</td><td>${statusChip(n.status)}</td>
       <td style="display:flex;gap:6px">
+        <button class="btn btn-o btn-sm" onclick='printDebtNote(${JSON.stringify(n).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
         ${n.status==='open' && can('admin','accountant') ? `<button class="btn btn-s btn-sm" onclick="settleDebtNotePrompt('${n.id}','${n.note_type}')">تسوية</button>
         <button class="btn btn-d btn-sm" onclick="cancelDebtNoteConfirm('${n.id}')">إلغاء</button>` : ''}
       </td></tr>`).join('') || '<tr><td colspan="7" class="ec">لا توجد سندات بعد</td></tr>'}
@@ -19,7 +20,23 @@ PAGE_RENDER.debtnotes = async (root) => {
     <div class="ph"><div><div class="ph-title">📜 سندات الديون</div><div class="ph-sub">ديون مستحقة لنا أو علينا — كل سند يُرحَّل قيداً محاسبياً فور إصداره</div></div>
       <div class="ph-actions">${can('admin','accountant') ? `<button class="btn btn-p btn-sm" onclick="openDebtNoteModal('receivable')">+ سند دين لنا</button><button class="btn btn-p btn-sm" onclick="openDebtNoteModal('payable')">+ سند دين علينا</button>` : ''}</div></div>
     <div class="card"><div class="card-title">ديون لنا (Receivable)</div>${renderTable(receivable)}</div>
-    <div class="card"><div class="card-title">ديون علينا (Payable)</div>${renderTable(payable)}</div>`;
+    <div class="card"><div class="card-title">ديون علينا (Payable)</div>${renderTable(payable)}</div>
+    <div id="debtnote-print-area"></div>`;
+};
+window.printDebtNote = (n) => {
+  const printArea = document.getElementById('debtnote-print-area');
+  printArea.innerHTML = `<div id="print-area">
+    <div class="print-header"><div><div style="font-weight:800;font-size:16px">${window.APP_CONFIG?.APP_NAME||''}</div><div style="font-size:11px;color:#555">سند دين ${n.note_type==='receivable'?'لنا':'علينا'} — ${n.doc_num}</div></div><div class="print-seal">🏛</div></div>
+    <div style="padding:20px 4px;font-size:13px;line-height:2">
+      <div>تاريخ الإصدار: <b>${n.issue_date}</b></div>
+      <div>تاريخ الاستحقاق: <b>${n.due_date||'—'}</b></div>
+      <div>الطرف: <b>${n.customers?.name || n.counterparty_name || '—'}</b></div>
+      <div>المبلغ: <b>${fmtIQD(n.amount)}</b></div>
+      <div>الحالة: ${n.status==='open'?'مفتوح':n.status==='settled'?'مُسوًّى':'ملغى'}</div>
+      ${n.notes ? `<div>ملاحظات: ${n.notes}</div>` : ''}
+      <div style="margin-top:40px;display:flex;justify-content:space-between"><span>توقيع الطرف: ____________</span><span>توقيع المُعتمِد: ____________</span></div>
+    </div></div>`;
+  setTimeout(() => window.print(), 100);
 };
 
 window.openDebtNoteModal = async (noteType) => {

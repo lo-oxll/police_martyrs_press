@@ -1759,6 +1759,70 @@ const DB = {
     await this.log('reset_page_permission', 'page_permissions', null, { page_id: pageId, role });
   },
 
+  // ══════════════════════════════════════════════════════════════════
+  //  دفعة إضافية من اعدادات البرنامج: ألوان/قياسات، ماركات، خصومات، مندوبو مبيعات، شركاء أرباح، تدوير موازنة
+  // ══════════════════════════════════════════════════════════════════
+  // ── الألوان والقياسات ─────────────────────────────
+  async listColors() { const { data, error } = await sb.from('colors').select('*').eq('is_active', true).order('name'); if (error) throw error; return data; },
+  async createColor(c) { const { data, error } = await sb.from('colors').insert(c).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async deactivateColor(id) { const { error } = await sb.from('colors').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+  async listSizes() { const { data, error } = await sb.from('sizes').select('*').eq('is_active', true).order('sort_order'); if (error) throw error; return data; },
+  async createSize(s) { const { data, error } = await sb.from('sizes').insert(s).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async deactivateSize(id) { const { error } = await sb.from('sizes').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+
+  // ── ماركات المواد ─────────────────────────────
+  async listBrands() { const { data, error } = await sb.from('material_brands').select('*').eq('is_active', true).order('name'); if (error) throw error; return data; },
+  async createBrand(b) { const { data, error } = await sb.from('material_brands').insert(b).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async deactivateBrand(id) { const { error } = await sb.from('material_brands').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+
+  // ── بطاقات الخصم ─────────────────────────────
+  async listDiscountCards() { const { data, error } = await sb.from('discount_cards').select('*').order('created_at', { ascending: false }); if (error) throw error; return data; },
+  async createDiscountCard(d) { const { data, error } = await sb.from('discount_cards').insert(d).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async deactivateDiscountCard(id) { const { error } = await sb.from('discount_cards').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+
+  // ── مندوبو المبيعات ─────────────────────────────
+  async listSalesReps(activeOnly = true) {
+    let q = sb.from('sales_reps').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createSalesRep(r) { const { data, error } = await sb.from('sales_reps').insert(r).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async updateSalesRep(id, patch) { const { error } = await sb.from('sales_reps').update(patch).eq('id', id); if (error) throw friendlyDbError(error); },
+  async deactivateSalesRep(id) { const { error } = await sb.from('sales_reps').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+  // تقرير عمولات المندوبين: مجموع فواتير الإصدار المرتبطة بكل مندوب × نسبة عمولته، بفترة معيّنة
+  async repCommissionReport(dateFrom, dateTo) {
+    const { data, error } = await sb.from('issue_docs').select('total, sales_rep_id, sales_reps(name, commission_percent)')
+      .eq('is_cancelled', false).not('sales_rep_id', 'is', null).gte('doc_date', dateFrom).lte('doc_date', dateTo);
+    if (error) throw error;
+    const map = {};
+    (data || []).forEach(d => {
+      const id = d.sales_rep_id;
+      map[id] = map[id] || { name: d.sales_reps?.name || '', commission_percent: Number(d.sales_reps?.commission_percent || 0), totalSales: 0 };
+      map[id].totalSales += Number(d.total || 0);
+    });
+    return Object.values(map).map(r => ({ ...r, commissionAmount: r.totalSales * r.commission_percent / 100 }));
+  },
+
+  // ── شركاء الأرباح (توزيع الأرباح) ─────────────────────────────
+  async listProfitPartners() { const { data, error } = await sb.from('profit_partners').select('*').eq('is_active', true).order('name'); if (error) throw error; return data; },
+  async createProfitPartner(p) { const { data, error } = await sb.from('profit_partners').insert(p).select().single(); if (error) throw friendlyDbError(error); return data; },
+  async deactivateProfitPartner(id) { const { error } = await sb.from('profit_partners').update({ is_active: false }).eq('id', id); if (error) throw friendlyDbError(error); },
+
+  // ── تدوير الميزانية ─────────────────────────────
+  // ينسخ كل بنود موازنة سنة مالية مصدر إلى سنة مالية هدف، بزيادة نسبة مئوية اختيارية
+  async rolloverBudget(fromFyId, toFyId, increasePercent) {
+    const sourceBudgets = await this.listBudgets(fromFyId);
+    if (!sourceBudgets.length) throw new Error('لا توجد بنود موازنة بالسنة المالية المصدر');
+    const factor = 1 + (Number(increasePercent) || 0) / 100;
+    const rows = sourceBudgets.map(b => ({ fiscal_year_id: toFyId, account_id: b.account_id, budgeted_amount: Math.round(Number(b.budgeted_amount) * factor), notes: b.notes }));
+    const { error } = await sb.from('budgets').insert(rows);
+    if (error) throw friendlyDbError(error);
+    const session = await this.currentSession();
+    await sb.from('budget_rollover_log').insert({ from_fiscal_year_id: fromFyId, to_fiscal_year_id: toFyId, increase_percent: increasePercent || 0, rows_created: rows.length, created_by: session?.user?.id });
+    await this.log('rollover_budget', 'budgets', null, { from: fromFyId, to: toFyId, rows: rows.length });
+    return rows.length;
+  },
+
   // ── صيانة الملفات: لوحة فحص سريعة لصحة البيانات التشغيلية ─────────────────────────────
   async systemMaintenanceSummary() {
     const [low, pendingUsers, pendingEntries, materialsNoBarcode, archiveNoUrl] = await Promise.all([

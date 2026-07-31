@@ -290,6 +290,7 @@ function itemRowHTML(prefix, isReceive) {
       ? `<input type="number" step="1" min="0" class="price-in" placeholder="0">`
       : `<span class="price-out mono" data-price="0" style="color:var(--gold)">0</span>`}</td>
     <td style="width:120px" class="row-total mono">0.00</td>
+    <td style="min-width:130px"><input class="row-notes" placeholder="ملاحظة (اختياري)" style="font-size:11.5px;padding:6px 8px"></td>
     <td style="width:40px"><button class="btn btn-d btn-sm" onclick="this.closest('tr').remove(); recalcItems('${prefix}')">✕</button></td>
   </tr>`;
 }
@@ -390,7 +391,7 @@ function collectItemRows(prefix) {
       problems.push(`الصف ${idx + 1} (${searchVal || material_id}): الكمية فارغة أو غير صحيحة`);
       return;
     }
-    rows.push({ material_id, qty, unit_price });
+    rows.push({ material_id, qty, unit_price, notes: tr.querySelector('.row-notes')?.value?.trim() || null });
   });
   return { rows, problems };
 }
@@ -416,7 +417,7 @@ PAGE_RENDER.receive = async (root) => {
     </div>
     <div class="card">
       <div class="card-title">المواد المستلَمة</div>
-      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>سعر الوصل (د.ع)</th><th>الإجمالي (د.ع)</th><th></th></tr></thead>
+      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>سعر الوصل (د.ع)</th><th>الإجمالي (د.ع)</th><th>ملاحظة</th><th></th></tr></thead>
         <tbody id="r-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('r', true)">+ إضافة مادة</button>
       <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="r-grand">0 د.ع</span></div>
@@ -469,10 +470,11 @@ PAGE_RENDER.issue = async (root) => {
         <div class="fgroup"><label>المخزن *</label><select id="i-wh" onchange="refreshIssueRowPrices()"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
       </div>
       <div class="fgroup" style="margin-top:12px"><label>ملاحظات</label><textarea id="i-notes"></textarea></div>
+      <div class="fgroup" style="margin-top:12px"><label>مندوب المبيعات (اختياري)</label><select id="i-rep"><option value="">— بدون —</option>${(await DB.listSalesReps()).map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select></div>
     </div>
     <div class="card">
       <div class="card-title">المواد المصروفة</div>
-      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>السعر الوسطي (د.ع)</th><th>الإجمالي (د.ع)</th><th></th></tr></thead>
+      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>السعر الوسطي (د.ع)</th><th>الإجمالي (د.ع)</th><th>ملاحظة</th><th></th></tr></thead>
         <tbody id="i-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('i', false)">+ إضافة مادة</button>
       <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="i-grand">0 د.ع</span></div>
@@ -514,7 +516,7 @@ window.submitIssue = async (andPrint = false) => {
   const btns = document.querySelectorAll('.form-foot .btn');
   btns.forEach(b => b.disabled = true);
   try {
-    const idoc = await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: '', recipient_name: '', recipient_person: '', notes: gv('i-notes'), created_by: ME.id }, items);
+    const idoc = await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: '', recipient_name: '', recipient_person: '', notes: gv('i-notes'), sales_rep_id: gv('i-rep') || null, created_by: ME.id }, items);
     toast('✅ تم حفظ وترحيل وثيقة الإصدار', 's');
     window.__docSeq = null;
     await viewDoc('issues', idoc.id, '');

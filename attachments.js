@@ -75,8 +75,24 @@ PAGE_RENDER.archive = async (root) => {
     <div class="card" id="arc-list"><div class="itw"><table><thead><tr><th>الرقم</th><th>العنوان</th><th>التصنيف</th><th>التاريخ</th><th>مرجع</th><th></th></tr></thead>
     <tbody>${list.map(a => `<tr><td class="doc-num">${a.doc_num}</td><td>${a.file_url?`<a href="${a.file_url}" target="_blank">${a.title}</a>`:a.title}</td>
       <td>${a.category||'—'}</td><td class="mono">${a.archive_date}</td><td class="mono">${a.related_ref||'—'}</td>
-      <td>${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteArchiveConfirm('${a.id}','${a.title.replace(/'/g,"")}')">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد بطاقات أرشيف بعد</td></tr>'}
-    </tbody></table></div></div>`;
+      <td><button class="btn btn-o btn-sm" onclick='printArchiveCard(${JSON.stringify(a).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
+      ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteArchiveConfirm('${a.id}','${a.title.replace(/'/g,"")}')">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد بطاقات أرشيف بعد</td></tr>'}
+    </tbody></table></div></div>
+    <div id="archive-print-area"></div>`;
+};
+window.printArchiveCard = (a) => {
+  const printArea = document.getElementById('archive-print-area');
+  printArea.innerHTML = `<div id="print-area">
+    <div class="print-header"><div><div style="font-weight:800;font-size:16px">${window.APP_CONFIG?.APP_NAME||''}</div><div style="font-size:11px;color:#555">بطاقة أرشيف — ${a.doc_num}</div></div><div class="print-seal">🏛</div></div>
+    <div style="padding:20px 4px;font-size:13px;line-height:2">
+      <div>العنوان: <b>${a.title}</b></div>
+      <div>التصنيف: ${a.category||'—'}</div>
+      <div>التاريخ: ${a.archive_date}</div>
+      <div>المرجع المرتبط: ${a.related_ref||'—'}</div>
+      <div>الوسوم: ${a.tags||'—'}</div>
+      ${a.notes ? `<div>ملاحظات: ${a.notes}</div>` : ''}
+    </div></div>`;
+  setTimeout(() => window.print(), 100);
 };
 window.searchArchive = async (term) => {
   const list = await DB.listArchiveCards(term);

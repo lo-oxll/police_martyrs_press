@@ -56,17 +56,37 @@ async function renderCashDocPage(root, { pageTitle, subtitle, type, docKind, par
     <div class="ph"><div><div class="ph-title">${pageTitle}</div><div class="ph-sub">${subtitle}</div></div>
       <div class="ph-actions">${can('admin','accountant') ? `<button class="btn btn-p btn-sm" id="btn-new-cashdoc">+ جديد</button>` : ''}</div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>التاريخ</th><th>${partyLabel}</th><th>المبلغ</th><th>البيان</th><th></th></tr></thead>
-    <tbody>${docs.map(d => `<tr>
+    <tbody>${docs.map(d => {
+      const partyName = custMap[d.counterparty_account_id] ? custMap[d.counterparty_account_id].name : (d.chart_of_accounts ? d.chart_of_accounts.code+' — '+d.chart_of_accounts.name : '—');
+      return `<tr>
       <td class="mono">${d.trans_date}</td>
-      <td>${custMap[d.counterparty_account_id] ? custMap[d.counterparty_account_id].name : (d.chart_of_accounts ? d.chart_of_accounts.code+' — '+d.chart_of_accounts.name : '—')}</td>
+      <td>${partyName}</td>
       <td class="mono gold-txt">${fmtIQD(d.amount)}</td><td>${d.description||'—'}</td>
-      <td>${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteCashDocConfirm('${d.id}','${d.journal_entry_id||''}','${(d.description||'').replace(/'/g,"")}')">حذف</button>` : ''}</td>
-      </tr>`).join('') || `<tr><td colspan="5" class="ec">لا توجد سجلات بعد</td></tr>`}
-    </tbody></table></div></div>`;
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-o btn-sm" onclick='printCashVoucher(${JSON.stringify({ pageTitle, trans_date: d.trans_date, party: partyName, amount: d.amount, description: d.description }).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteCashDocConfirm('${d.id}','${d.journal_entry_id||''}','${(d.description||'').replace(/'/g,"")}')">حذف</button>` : ''}
+      </td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="5" class="ec">لا توجد سجلات بعد</td></tr>`}
+    </tbody></table></div></div>
+    <div id="cashdoc-print-area"></div>`;
 
   document.getElementById('btn-new-cashdoc')?.addEventListener('click', () => openCashDocModal({ type, docKind, partyLabel, allowAccount, customers, onSaved: () => go(window.__currentPageId) }));
 }
 
+window.printCashVoucher = (d) => {
+  const printArea = document.getElementById('cashdoc-print-area');
+  printArea.innerHTML = `<div id="print-area">
+    <div class="print-header"><div><div style="font-weight:800;font-size:16px">${window.APP_CONFIG?.APP_NAME||''}</div><div style="font-size:11px;color:#555">${d.pageTitle}</div></div><div class="print-seal">🏛</div></div>
+    <div style="padding:20px 4px;font-size:13px;line-height:2">
+      <div>التاريخ: <b>${d.trans_date}</b></div>
+      <div>الطرف: <b>${d.party}</b></div>
+      <div>المبلغ: <b>${fmtIQD(d.amount)}</b></div>
+      <div>البيان: ${d.description||'—'}</div>
+      <div style="margin-top:40px;display:flex;justify-content:space-between"><span>توقيع المستلم: ____________</span><span>توقيع المُعتمِد: ____________</span></div>
+    </div></div>`;
+  setTimeout(() => window.print(), 100);
+};
 window.openCashDocModal = async ({ type, docKind, partyLabel, allowAccount, customers, onSaved }) => {
   const accounts = allowAccount ? await DB.chartOfAccounts() : [];
   showModal(`${partyLabel} جديد`, `
