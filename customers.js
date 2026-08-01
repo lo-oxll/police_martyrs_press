@@ -20,7 +20,8 @@ PAGE_RENDER.customers = async (root) => {
       <td style="display:flex;gap:6px">
         <button class="btn btn-o btn-sm" onclick="go('accountstatement');setTimeout(()=>prefillStatementCustomer('${c.id}'),50)">كشف الحساب</button>
         ${can('admin','accountant') ? `<button class="btn btn-o btn-sm" onclick='openCustomerModal(${JSON.stringify(c)})'>تعديل</button>` : ''}
-        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deactivateCustomerConfirm('${c.id}')">إلغاء تفعيل</button>` : ''}
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deactivateCustomerConfirm('${c.id}')">إلغاء تفعيل</button>
+        <button class="btn btn-d btn-sm" onclick="hardDeleteCustomerConfirm('${c.id}','${c.account_id}','${(c.name||'').replace(/'/g,"")}')">🗑 حذف نهائي</button>` : ''}
       </td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا يوجد زبائن بعد</td></tr>'}
     </tbody></table></div></div>`;
 };
@@ -46,6 +47,11 @@ window.deactivateCustomerConfirm = async (id) => {
   if (!confirm('إلغاء تفعيل هذا الزبون؟ يبقى تاريخه بالفواتير والإيصالات محفوظاً، فقط لن يظهر بالقوائم الجديدة.')) return;
   try { await DB.deactivateCustomer(id); toast('تم', 's'); go('customers'); }
   catch (e) { toast('تعذر: ' + e.message, 'e'); }
+};
+window.hardDeleteCustomerConfirm = async (id, accountId, name) => {
+  if (!confirm(`حذف نهائي للزبون "${name}" وحسابه بدليل الحسابات. يُرفَض تلقائياً لو له فواتير أو قيود سابقة (لحماية سجلاتها). هذا إجراء لا يمكن التراجع عنه. متابعة؟`)) return;
+  try { await DB.hardDeleteCustomer(id, accountId, name); toast('تم الحذف النهائي', 's'); go('customers'); }
+  catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
 // ── قالب مشترك لصفحات القبض/الصرف (إيصال قبض / أمر قبض / أمر صرف) ─────────────────────────────

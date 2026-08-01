@@ -1505,6 +1505,14 @@ const DB = {
     const totalPayable = withAging.filter(n => n.note_type === 'payable').reduce((s, n) => s + Number(n.amount), 0);
     return { notes: withAging, totalReceivable, totalPayable };
   },
+  // حذف نهائي لسند دين (أي حالة) — مدير النظام فقط. يحذف قيوده المحاسبية المرتبطة (الإصدار والتسوية إن وُجدت) بنفس آلية حذف قيود صندوق المركز الآمنة
+  async hardDeleteDebtNote(id, docNum, journalEntryId, settlementJournalEntryId) {
+    if (settlementJournalEntryId) { const { error } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: settlementJournalEntryId }); if (error) throw friendlyDbError(error); }
+    if (journalEntryId) { const { error } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId }); if (error) throw friendlyDbError(error); }
+    const { error } = await sb.from('debt_notes').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_debt_note', 'debt_notes', id, { doc_num: docNum });
+  },
 
   // ══════════════════════════════════════════════════════════════════
   //  المرحلة ٧: الملحقات (عقود/أرشيف/أعمال ومهام/تأجير) + التصنيع

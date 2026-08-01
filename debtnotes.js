@@ -14,6 +14,7 @@ PAGE_RENDER.debtnotes = async (root) => {
         <button class="btn btn-o btn-sm" onclick='printDebtNote(${JSON.stringify(n).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
         ${n.status==='open' && can('admin','accountant') ? `<button class="btn btn-s btn-sm" onclick="settleDebtNotePrompt('${n.id}','${n.note_type}')">تسوية</button>
         <button class="btn btn-d btn-sm" onclick="cancelDebtNoteConfirm('${n.id}')">إلغاء</button>` : ''}
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="hardDeleteDebtNoteConfirm('${n.id}','${n.doc_num}','${n.journal_entry_id||''}','${n.settlement_journal_entry_id||''}')">🗑 حذف نهائي</button>` : ''}
       </td></tr>`).join('') || '<tr><td colspan="7" class="ec">لا توجد سندات بعد</td></tr>'}
     </tbody></table></div>`;
   root.innerHTML = `
@@ -91,6 +92,13 @@ window.cancelDebtNoteConfirm = async (id) => {
   if (!confirm('إلغاء هذا السند؟ سيُرحَّل قيد عكسي لإصداره الأصلي.')) return;
   try { await DB.cancelDebtNote(id); toast('تم الإلغاء', 's'); go('debtnotes'); }
   catch (e) { toast('تعذر الإلغاء: ' + e.message, 'e'); }
+};
+window.hardDeleteDebtNoteConfirm = async (id, docNum, journalEntryId, settlementJournalEntryId) => {
+  if (!confirm(`حذف نهائي لسند "${docNum}" وكل قيوده المحاسبية المرتبطة (إصدار وتسوية إن وُجدت). هذا إجراء لا يمكن التراجع عنه. متابعة؟`)) return;
+  try {
+    await DB.hardDeleteDebtNote(id, docNum, journalEntryId || null, settlementJournalEntryId || null);
+    toast('تم الحذف النهائي', 's'); go('debtnotes');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
 // ── تقارير سندات الديون ─────────────────────────────
