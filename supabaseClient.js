@@ -1768,6 +1768,136 @@ const DB = {
   },
 
   // ══════════════════════════════════════════════════════════════════
+  //  تقارير مستودعية إضافية + تصنيع موسّع
+  // ══════════════════════════════════════════════════════════════════
+  // ── كشف تفصيلي للمستودعات: كل المخازن جنباً لجنب (قيمة الرصيد + حركة الفترة) ─────────────────────────────
+  async allWarehousesDetailed(dateFrom, dateTo) {
+    const whs = await this.listWarehouses();
+    const rows = [];
+    for (const w of whs) {
+      const t = await this.warehouseTotals(w.id, dateFrom, dateTo);
+      rows.push({ warehouse: w.name, code: w.code, ...t });
+    }
+    return rows;
+  },
+
+  // ── متابعة المشتريات: فواتير الاستلام مجمّعة حسب المورّد (نصي، بلا ربط محاسبي) ─────────────────────────────
+  async purchaseTracking(dateFrom, dateTo) {
+    const { data, error } = await sb.from('receipt_docs').select('doc_num, doc_date, total, supplier, warehouses(name)')
+      .eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo).order('doc_date', { ascending: false });
+    if (error) throw error;
+    const bySupplier = {};
+    (data || []).forEach(d => {
+      const key = d.supplier || 'غير محدَّد';
+      bySupplier[key] = bySupplier[key] || { supplier: key, count: 0, total: 0 };
+      bySupplier[key].count++; bySupplier[key].total += Number(d.total || 0);
+    });
+    return { rows: data || [], bySupplier: Object.values(bySupplier).sort((a,b) => b.total - a.total) };
+  },
+
+  // ── متابعة المبيعات اليومية: فواتير الإصدار مجمّعة حسب اليوم ─────────────────────────────
+  async dailySalesTracking(dateFrom, dateTo) {
+    const { data, error } = await sb.from('issue_docs').select('doc_date, total').eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo);
+    if (error) throw error;
+    const byDay = {};
+    (data || []).forEach(d => { byDay[d.doc_date] = byDay[d.doc_date] || { date: d.doc_date, count: 0, total: 0 }; byDay[d.doc_date].count++; byDay[d.doc_date].total += Number(d.total || 0); });
+    return Object.values(byDay).sort((a, b) => a.date < b.date ? -1 : 1);
+  },
+
+  // ── كشف تدفقات المخزون: إجمالي وارد/صادر عبر كل المخازن مجتمعة بفترة، مجمَّع يومياً ─────────────────────────────
+  async stockFlowReport(dateFrom, dateTo) {
+    const [rec, iss] = await Promise.all([
+      sb.from('receipt_docs').select('doc_date, total').eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+      sb.from('issue_docs').select('doc_date, total').eq('is_cancelled', false).gte('doc_date', dateFrom).lte('doc_date', dateTo),
+    ]);
+    if (rec.error) throw rec.error; if (iss.error) throw iss.error;
+    const byDay = {};
+    (rec.data || []).forEach(d => { byDay[d.doc_date] = byDay[d.doc_date] || { date: d.doc_date, in: 0, out: 0 }; byDay[d.doc_date].in += Number(d.total || 0); });
+    (iss.data || []).forEach(d => { byDay[d.doc_date] = byDay[d.doc_date] || { date: d.doc_date, in: 0, out: 0 }; byDay[d.doc_date].out += Number(d.total || 0); });
+    let running = 0;
+    return Object.values(byDay).sort((a,b) => a.date < b.date ? -1 : 1).map(r => { running += r.in - r.out; return { ...r, net: r.in - r.out, running }; });
+  },
+
+  // ── كشف ايصالات الشحن (تقرير) ─────────────────────────────
+  async shippingReceiptsReport(dateFrom, dateTo) {
+    const { data, error } = await sb.from('shipping_receipts').select('*').gte('ship_date', dateFrom).lte('ship_date', dateTo).order('ship_date', { ascending: false });
+    if (error) throw error; return data;
+  },
+
+  // ── التصنيع: توزيع نفقات غير مباشرة على طلبيات مكتملة بفترة، حسب قيمة الإنتاج ─────────────────────────────
+  async allocateIndirectExpense(expenseAccountId, dateFrom, dateTo, totalAmount, basis) {
+    const { data: orders, error } = await sb.from('manufacturing_orders').select('id, doc_num, actual_cost').eq('status', 'completed').gte('completed_date', dateFrom).lte('completed_date', dateTo);
+    if (error) throw error;
+    if (!orders.length) throw new Error('لا توجد طلبيات تصنيع مكتملة بهذه الفترة لتوزيع النفقة عليها');
+    const totalProdValue = orders.reduce((s, o) => s + Number(o.actual_cost || 0), 0);
+    const items = orders.map(o => {
+      const share = basis === 'equal' ? totalAmount / orders.length : (totalProdValue > 0 ? (Number(o.actual_cost || 0) / totalProdValue) * totalAmount : totalAmount / orders.length);
+      return { manufacturing_order_id: o.id, allocated_amount: Math.round(share) };
+    });
+    const session = await this.currentSession();
+    const { data: alloc, error: e1 } = await sb.from('indirect_expense_allocations').insert({ expense_account_id: expenseAccountId, period_from: dateFrom, period_to: dateTo, total_amount: totalAmount, basis, created_by: session?.user?.id }).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('indirect_expense_allocation_items').insert(items.map(it => ({ ...it, allocation_id: alloc.id })));
+    if (e2) throw friendlyDbError(e2);
+    await this.log('allocate_indirect_expense', 'indirect_expense_allocations', alloc.id, { total: totalAmount, orders: orders.length });
+    return { orders: orders.map((o, i) => ({ ...o, allocated: items[i].allocated_amount })), totalAmount };
+  },
+  async listIndirectExpenseAllocations() {
+    const { data, error } = await sb.from('indirect_expense_allocations').select('*, chart_of_accounts(code,name), indirect_expense_allocation_items(allocated_amount, manufacturing_orders(doc_num))').order('created_at', { ascending: false });
+    if (error) throw error; return data;
+  },
+
+  // ── التصنيع: كشف الاحتياجات (المكوّنات المطلوبة لطلبيات مخطَّطة مقابل الرصيد المتوفر) ─────────────────────────────
+  async manufacturingRequirements() {
+    const { data: orders, error } = await sb.from('manufacturing_orders').select('doc_num, batches, warehouse_id, warehouses(name), manufacturing_models(name, manufacturing_model_components(qty_per_batch, materials(id,store_num,name,unit)))').eq('status', 'planned');
+    if (error) throw error;
+    const rows = [];
+    for (const o of orders) {
+      for (const c of o.manufacturing_models.manufacturing_model_components) {
+        const required = Number(c.qty_per_batch) * Number(o.batches);
+        const { data: stock } = await sb.from('material_stock').select('qty_on_hand').eq('material_id', c.materials.id).eq('warehouse_id', o.warehouse_id).maybeSingle();
+        const available = Number(stock?.qty_on_hand || 0);
+        rows.push({ order: o.doc_num, warehouse: o.warehouses?.name, material: `${c.materials.store_num} — ${c.materials.name}`, unit: c.materials.unit, required, available, shortfall: Math.max(0, required - available) });
+      }
+    }
+    return rows;
+  },
+
+  // ── التصنيع: كشف انحراف التكلفة (الفعلية مقابل المعيارية المشتقة من الـBOM بأسعار وسطية حالية) ─────────────────────────────
+  async manufacturingVarianceReport() {
+    const { data: orders, error } = await sb.from('manufacturing_orders').select('doc_num, batches, actual_cost, warehouse_id, completed_date, manufacturing_models(name, manufacturing_model_components(qty_per_batch, materials(id,store_num,name)))').eq('status', 'completed');
+    if (error) throw error;
+    const rows = [];
+    for (const o of orders) {
+      let standardCost = 0;
+      for (const c of o.manufacturing_models.manufacturing_model_components) {
+        const { data: stock } = await sb.from('material_stock').select('avg_price').eq('material_id', c.materials.id).eq('warehouse_id', o.warehouse_id).maybeSingle();
+        standardCost += Number(c.qty_per_batch) * Number(o.batches) * Number(stock?.avg_price || 0);
+      }
+      rows.push({ order: o.doc_num, model: o.manufacturing_models.name, date: o.completed_date, standardCost, actualCost: Number(o.actual_cost || 0), variance: Number(o.actual_cost || 0) - standardCost });
+    }
+    return rows;
+  },
+
+  // ── التصنيع: جرد المواد والمكونات (كل مادة تدخل كمكوّن بأي BOM، مع رصيدها الحالي بكل مخزن) ─────────────────────────────
+  async componentMaterialsInventory() {
+    const { data: comps, error } = await sb.from('manufacturing_model_components').select('materials(id,store_num,name,unit)');
+    if (error) throw error;
+    const ids = [...new Map(comps.map(c => [c.materials.id, c.materials])).values()];
+    const rows = [];
+    for (const m of ids) {
+      const { data: stock } = await sb.from('material_stock').select('qty_on_hand, warehouses(name)').eq('material_id', m.id);
+      const total = (stock || []).reduce((s, r) => s + Number(r.qty_on_hand || 0), 0);
+      rows.push({ store_num: m.store_num, name: m.name, unit: m.unit, total, byWarehouse: (stock || []).map(s => `${s.warehouses?.name}: ${s.qty_on_hand}`).join('، ') });
+    }
+    return rows;
+  },
+  async updateManufacturingOrderProcess(id, processNotes, laborCost) {
+    const { error } = await sb.from('manufacturing_orders').update({ process_notes: processNotes, labor_cost: laborCost }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+  },
+
+  // ══════════════════════════════════════════════════════════════════
   //  بطاقة قالب افتراضي: قوالب فواتير جاهزة يُعاد استخدامها بضغطة زر
   // ══════════════════════════════════════════════════════════════════
   async listInvoiceTemplates(docType) {

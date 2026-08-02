@@ -93,6 +93,7 @@ PAGE_RENDER.mfgorder = async (root) => {
       <td class="mono">${fmtQty(o.batches)}</td><td class="mono">${o.order_date}</td><td>${stChip(o.status)}</td>
       <td class="mono gold-txt">${o.actual_cost?fmtIQD(o.actual_cost):'—'}</td>
       <td style="display:flex;gap:6px">
+        <button class="btn btn-o btn-sm" onclick='openMfgProcessModal(${JSON.stringify(o).replace(/'/g,"&#39;")})'>عملية تصنيع</button>
         ${o.status==='planned' && can('admin','accountant') ? `<button class="btn btn-s btn-sm" onclick="completeMfgOrderConfirm('${o.id}')">تنفيذ</button>
         <button class="btn btn-d btn-sm" onclick="cancelMfgOrderConfirm('${o.id}')">إلغاء</button>` : ''}
       </td></tr>`).join('') || '<tr><td colspan="8" class="ec">لا توجد طلبيات تصنيع بعد</td></tr>'}
@@ -133,4 +134,83 @@ window.cancelMfgOrderConfirm = async (id) => {
   if (!confirm('إلغاء هذه الطلبية؟')) return;
   try { await DB.cancelManufacturingOrder(id); toast('تم الإلغاء', 's'); go('mfgorder'); }
   catch (e) { toast('تعذر: ' + e.message, 'e'); }
+};
+
+// ── ادخال وتعديل عملية تصنيع (ملاحظات التنفيذ الفعلي + كلفة العمالة لطلبية قائمة) ─────────────────────────────
+window.openMfgProcessModal = (o) => {
+  showModal(`عملية تصنيع — ${o.doc_num}`, `
+    <div class="fgroup"><label>ملاحظات العملية (خطوات، ملاحظات تشغيل...)</label><textarea id="m-mp-notes" rows="4">${o.process_notes||''}</textarea></div>
+    <div class="fgroup"><label>كلفة العمالة المباشرة (اختياري)</label><input id="m-mp-labor" type="number" step="1" value="${o.labor_cost||0}"></div>
+  `, async () => {
+    try { await DB.updateManufacturingOrderProcess(o.id, gv('m-mp-notes'), Number(gv('m-mp-labor'))||0); toast('تم الحفظ', 's'); go('mfgorder'); }
+    catch (e) { toast('تعذر الحفظ: ' + e.message, 'e'); return false; }
+  });
+};
+
+// ── توزيع نفقات غير مباشرة على طلبيات تصنيع مكتملة ─────────────────────────────
+PAGE_RENDER.indirectexpenses = async (root) => {
+  const [accounts, allocations] = await Promise.all([DB.chartOfAccounts(), DB.listIndirectExpenseAllocations()]);
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">توزيع نفقات غير مباشرة</div><div class="ph-sub">يوزّع مبلغ نفقة (كهرباء المصنع، إيجار...) على طلبيات التصنيع المكتملة بفترة، حسب حصة كل طلبية من قيمة الإنتاج — أداة تخصيص إداري، لا يُرحَّل قيداً جديداً (النفقة مسجَّلة أصلاً بحسابها)</div></div>
+      <div class="ph-actions">${can('admin','accountant') ? `<button class="btn btn-p btn-sm" onclick="openIndirectExpenseModal()">+ توزيع جديد</button>` : ''}</div></div>
+    ${allocations.map(a => `<div class="card">
+      <div class="card-title">${a.chart_of_accounts?.code} — ${a.chart_of_accounts?.name} — ${fmtIQD(a.total_amount)} (${a.period_from} إلى ${a.period_to})</div>
+      <div class="itw"><table><thead><tr><th>طلبية التصنيع</th><th>المبلغ المخصَّص</th></tr></thead>
+      <tbody>${(a.indirect_expense_allocation_items||[]).map(it => `<tr><td>${it.manufacturing_orders?.doc_num}</td><td class="mono gold-txt">${fmtIQD(it.allocated_amount)}</td></tr>`).join('')}</tbody></table></div>
+    </div>`).join('') || '<div class="card"><div class="ec">لا توجد عمليات توزيع بعد</div></div>'}
+    <div id="ie-preview"></div>`;
+};
+window.openIndirectExpenseModal = async () => {
+  const accounts = await DB.chartOfAccounts();
+  showModal('توزيع نفقة غير مباشرة', `
+    <div class="fgroup"><label>حساب النفقة</label><select id="m-ie-acc">${accounts.filter(a=>a.type==='expense').map(a => `<option value="${a.id}">${a.code} — ${a.name}</option>`).join('')}</select></div>
+    <div class="fg2"><div class="fgroup"><label>من تاريخ</label><input id="m-ie-from" type="date" value="${todayISO().slice(0,8)}01"></div><div class="fgroup"><label>إلى تاريخ</label><input id="m-ie-to" type="date" value="${todayISO()}"></div></div>
+    <div class="fgroup"><label>المبلغ الإجمالي</label><input id="m-ie-amount" type="number" step="1"></div>
+    <div class="fgroup"><label>أساس التوزيع</label><select id="m-ie-basis"><option value="production_value">حسب قيمة إنتاج كل طلبية</option><option value="equal">بالتساوي بين الطلبيات</option></select></div>
+  `, async () => {
+    const amount = Number(gv('m-ie-amount'));
+    if (!amount) { toast('أدخل المبلغ', 'e'); return false; }
+    try {
+      const res = await DB.allocateIndirectExpense(gv('m-ie-acc'), gv('m-ie-from'), gv('m-ie-to'), amount, document.getElementById('m-ie-basis').value);
+      toast(`تم توزيع المبلغ على ${res.orders.length} طلبية`, 's'); go('indirectexpenses');
+    } catch (e) { toast('تعذر: ' + e.message, 'e'); return false; }
+  });
+};
+
+// ── كشف التصنيع واحتياجاته ─────────────────────────────
+PAGE_RENDER.mfgreport = async (root) => {
+  root.innerHTML = `<div class="ph"><div><div class="ph-title">كشف التصنيع واحتياجاته</div><div class="ph-sub">مكوّنات كل طلبية تصنيع مخطَّطة، والكمية المطلوبة مقابل المتوفر بالمخزن</div></div></div><div class="ec">جارِ التحميل...</div>`;
+  try {
+    const rows = await DB.manufacturingRequirements();
+    root.innerHTML = `<div class="ph"><div><div class="ph-title">كشف التصنيع واحتياجاته</div><div class="ph-sub">مكوّنات كل طلبية تصنيع مخطَّطة، والكمية المطلوبة مقابل المتوفر بالمخزن</div></div></div>
+    <div class="card"><div class="itw"><table><thead><tr><th>الطلبية</th><th>المخزن</th><th>المكوّن</th><th>مطلوب</th><th>متوفر</th><th>النقص</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td class="doc-num">${r.order}</td><td>${r.warehouse}</td><td>${r.material}</td><td class="mono">${fmtQty(r.required)} ${r.unit}</td><td class="mono">${fmtQty(r.available)} ${r.unit}</td>
+      <td class="mono" style="color:${r.shortfall>0?'var(--danger)':'var(--ok)'}">${r.shortfall>0?fmtQty(r.shortfall):'—'}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد طلبيات تصنيع مخطَّطة حالياً</td></tr>'}
+    </tbody></table></div></div>`;
+  } catch (e) { root.innerHTML += `<div class="card"><div class="ec">تعذر التحميل: ${e.message}</div></div>`; }
+};
+
+// ── كشف انحراف التصنيع ─────────────────────────────
+PAGE_RENDER.mfgdeviation = async (root) => {
+  root.innerHTML = `<div class="ph"><div><div class="ph-title">كشف انحراف التصنيع</div><div class="ph-sub">الكلفة الفعلية مقابل الكلفة المعيارية (المشتقة من BOM بأسعار المخزون الحالية) لكل طلبية مكتملة</div></div></div><div class="ec">جارِ التحميل...</div>`;
+  try {
+    const rows = await DB.manufacturingVarianceReport();
+    root.innerHTML = `<div class="ph"><div><div class="ph-title">كشف انحراف التصنيع</div><div class="ph-sub">الكلفة الفعلية مقابل الكلفة المعيارية لكل طلبية مكتملة</div></div></div>
+    <div class="card"><div class="itw"><table><thead><tr><th>الطلبية</th><th>النموذج</th><th>التاريخ</th><th>الكلفة المعيارية</th><th>الكلفة الفعلية</th><th>الانحراف</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td class="doc-num">${r.order}</td><td>${r.model}</td><td class="mono">${r.date}</td><td class="mono">${fmtIQD(r.standardCost)}</td><td class="mono">${fmtIQD(r.actualCost)}</td>
+      <td class="mono" style="color:${r.variance>0?'var(--danger)':'var(--ok)'}">${r.variance>0?'+':''}${fmtIQD(r.variance)}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد طلبيات مكتملة بعد</td></tr>'}
+    </tbody></table></div></div>`;
+  } catch (e) { root.innerHTML += `<div class="card"><div class="ec">تعذر التحميل: ${e.message}</div></div>`; }
+};
+
+// ── جرد المواد والمكونات ─────────────────────────────
+PAGE_RENDER.mfgcomponentscount = async (root) => {
+  root.innerHTML = `<div class="ph"><div><div class="ph-title">جرد المواد والمكونات</div><div class="ph-sub">كل مادة تدخل كمكوّن بأي نموذج تصنيع، مع رصيدها الحالي بكل مخزن</div></div></div><div class="ec">جارِ التحميل...</div>`;
+  try {
+    const rows = await DB.componentMaterialsInventory();
+    root.innerHTML = `<div class="ph"><div><div class="ph-title">جرد المواد والمكونات</div><div class="ph-sub">كل مادة تدخل كمكوّن بأي نموذج تصنيع، مع رصيدها الحالي بكل مخزن</div></div></div>
+    <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>المادة</th><th>إجمالي الرصيد</th><th>حسب المخزن</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td class="mono">${r.store_num}</td><td>${r.name}</td><td class="mono gold-txt">${fmtQty(r.total)} ${r.unit}</td><td class="ph-sub">${r.byWarehouse||'—'}</td></tr>`).join('') || '<tr><td colspan="4" class="ec">لا توجد مكوّنات مسجَّلة بأي نموذج تصنيع بعد</td></tr>'}
+    </tbody></table></div></div>`;
+  } catch (e) { root.innerHTML += `<div class="card"><div class="ec">تعذر التحميل: ${e.message}</div></div>`; }
 };
