@@ -2,6 +2,18 @@
 //  المرحلة ٨: البريد الداخلي + الباركود + صيانة الملفات + خدمات المزامنة + استيراد إكسل
 // ══════════════════════════════════════════════════════════════════
 
+// ── سجل جلسات الدخول (يُستنتَج من سجل المراجعة الموجود أصلاً) ─────────────────────────────
+PAGE_RENDER.loginsessions = async (root) => {
+  const rows = await DB.loginSessionsLog();
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">سجل جلسات الدخول</div><div class="ph-sub">آخر عمليات تسجيل الدخول والخروج بالنظام</div></div></div>
+    <div class="card"><div class="itw"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>الإجراء</th><th>التاريخ والوقت</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td>${r.profiles?.full_name||'—'}</td><td>${ROLE_LABEL[r.profiles?.role]||r.profiles?.role||''}</td>
+      <td>${r.action==='login' ? '<span class="chip chip-ok">دخول</span>' : '<span class="chip">خروج</span>'}</td>
+      <td class="mono">${new Date(r.created_at).toLocaleString('en-US')}</td></tr>`).join('') || '<tr><td colspan="4" class="ec">لا يوجد سجل بعد</td></tr>'}
+    </tbody></table></div></div>`;
+};
+
 // ── البريد الداخلي ─────────────────────────────
 PAGE_RENDER.internalmail = async (root) => {
   const [inbox, sent] = await Promise.all([DB.listInbox(), DB.listSentMail()]);

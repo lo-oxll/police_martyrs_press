@@ -80,18 +80,16 @@ async function renderCashDocPage(root, { pageTitle, subtitle, type, docKind, par
   document.getElementById('btn-new-cashdoc')?.addEventListener('click', () => openCashDocModal({ type, docKind, partyLabel, allowAccount, customers, onSaved: () => go(window.__currentPageId) }));
 }
 
-window.printCashVoucher = (d) => {
-  const printArea = document.getElementById('cashdoc-print-area');
-  printArea.innerHTML = `<div id="print-area">
-    <div class="print-header"><div><div style="font-weight:800;font-size:16px">${window.APP_CONFIG?.APP_NAME||''}</div><div style="font-size:11px;color:#555">${d.pageTitle}</div></div><div class="print-seal">🏛</div></div>
-    <div style="padding:20px 4px;font-size:13px;line-height:2">
+window.printCashVoucher = async (d) => {
+  const html = `<div style="padding:20px 4px;font-size:13px;line-height:2">
       <div>التاريخ: <b>${d.trans_date}</b></div>
       <div>الطرف: <b>${d.party}</b></div>
       <div>المبلغ: <b>${fmtIQD(d.amount)}</b></div>
       <div>البيان: ${d.description||'—'}</div>
       <div style="margin-top:40px;display:flex;justify-content:space-between"><span>توقيع المستلم: ____________</span><span>توقيع المُعتمِد: ____________</span></div>
-    </div></div>`;
-  setTimeout(() => window.print(), 100);
+    </div>`;
+  await renderPrintArea(d.pageTitle, html);
+  window.print();
 };
 window.openCashDocModal = async ({ type, docKind, partyLabel, allowAccount, customers, onSaved }) => {
   const accounts = allowAccount ? await DB.chartOfAccounts() : [];

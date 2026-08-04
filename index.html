@@ -70,6 +70,14 @@
     <div class="topmenu" id="topmenu">
       <button class="topmenu-burger no-print" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
       <div class="tm-bar" id="topmenu-bar"></div>
+      <div class="gsearch-wrap no-print">
+        <input id="gsearch-input" class="gsearch-input" placeholder="🔍 بحث شامل (فاتورة، زبون، مادة...)" autocomplete="off">
+        <div id="gsearch-results" class="gsearch-results hidden"></div>
+      </div>
+      <div class="notif-wrap no-print">
+        <button class="notif-bell" id="notif-bell" onclick="toggleNotifPanel()">🔔<span class="notif-count hidden" id="notif-count">0</span></button>
+        <div class="notif-panel hidden" id="notif-panel"></div>
+      </div>
     </div>
     <main class="main">
       <div id="page-root"></div>

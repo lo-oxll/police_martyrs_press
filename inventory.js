@@ -285,15 +285,21 @@ function itemRowHTML(prefix, isReceive) {
       <input type="hidden" class="mat-id">
     </div></td>
     <td style="width:70px"><span class="mat-unit">—</span></td>
-    <td style="width:110px"><input type="number" step="0.001" min="0.001" class="qty-in" placeholder="0"></td>
+    <td style="width:110px"><input type="number" step="0.001" min="0.001" class="qty-in" placeholder="0" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddRow('${prefix}',${isReceive});}"></td>
     <td style="width:120px">${isReceive
-      ? `<input type="number" step="1" min="0" class="price-in" placeholder="0">`
+      ? `<input type="number" step="1" min="0" class="price-in" placeholder="0" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddRow('${prefix}',${isReceive});}">`
       : `<span class="price-out mono" data-price="0" style="color:var(--gold)">0</span>`}</td>
     <td style="width:120px" class="row-total mono">0.00</td>
     <td style="min-width:130px"><input class="row-notes" placeholder="ملاحظة (اختياري)" style="font-size:11.5px;padding:6px 8px"></td>
     <td style="width:40px"><button class="btn btn-d btn-sm" onclick="this.closest('tr').remove(); recalcItems('${prefix}')">✕</button></td>
   </tr>`;
 }
+// إدخال سريع بلوحة المفاتيح: Enter بحقل الكمية/السعر يضيف سطراً جديداً ويركّز على بحث المادة فيه مباشرة
+window.quickAddRow = (prefix, isReceive) => {
+  addItemRow(prefix, isReceive);
+  const tbody = document.getElementById(prefix + '-items');
+  tbody.lastElementChild?.querySelector('.mat-search')?.focus();
+};
 
 function addItemRow(prefix, isReceive) {
   const tbody = document.getElementById(prefix + '-items');
@@ -405,7 +411,7 @@ PAGE_RENDER.receive = async (root) => {
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
-        <div class="fgroup"><label>رقم الوثيقة *</label><input id="r-docnum"></div>
+        <div class="fgroup"><label>رقم الوثيقة *</label><input id="r-docnum" value="${await DB.nextDocNumSuggestion('receive')}"></div>
         <div class="fgroup"><label>تاريخ الوثيقة *</label><input type="date" id="r-date" value="${todayISO()}"></div>
         <div class="fgroup"><label>المخزن *</label><select id="r-wh"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
       </div>
@@ -465,7 +471,7 @@ PAGE_RENDER.issue = async (root) => {
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
-        <div class="fgroup"><label>رقم الوثيقة *</label><input id="i-docnum"></div>
+        <div class="fgroup"><label>رقم الوثيقة *</label><input id="i-docnum" value="${await DB.nextDocNumSuggestion('issue')}"></div>
         <div class="fgroup"><label>تاريخ الوثيقة *</label><input type="date" id="i-date" value="${todayISO()}"></div>
         <div class="fgroup"><label>المخزن *</label><select id="i-wh" onchange="refreshIssueRowPrices()"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
       </div>

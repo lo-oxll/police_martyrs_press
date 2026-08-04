@@ -317,6 +317,7 @@ const PAGES = [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
     { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
+    { id: 'loginsessions', label: 'سجل جلسات الدخول', icon: '🔑', roles: ['admin','manager'] },
   ]},
 ];
 
@@ -511,6 +512,7 @@ async function go(pageId) {
 window.go = go;
 
 async function refreshBadges() {
+  refreshNotifPanel();
   try {
     const low = await DB.lowStock();
     const b = document.getElementById('badge-lowstock');
@@ -563,6 +565,52 @@ window.toggleTheme = () => {
   localStorage.setItem('wh-theme', document.documentElement.classList.contains('light') ? 'light' : 'dark');
 };
 
+// ── مركز التنبيهات الموحَّد ──────────────────────────────
+async function refreshNotifPanel() {
+  try {
+    const items = await DB.unifiedNotifications();
+    const countEl = document.getElementById('notif-count');
+    if (countEl) { countEl.textContent = items.length; countEl.classList.toggle('hidden', items.length === 0); }
+    const panel = document.getElementById('notif-panel');
+    if (panel) {
+      panel.innerHTML = items.length
+        ? items.map(it => `<div class="notif-item" onclick="go('${it.page}');document.getElementById('notif-panel').classList.add('hidden')">${it.type==='danger'?'🔴':it.type==='warning'?'🟡':'🔵'} ${it.label}</div>`).join('')
+        : '<div class="notif-empty">لا توجد تنبيهات حالياً 🎉</div>';
+    }
+  } catch (e) { /* صامت */ }
+}
+window.toggleNotifPanel = () => {
+  const panel = document.getElementById('notif-panel');
+  panel.classList.toggle('hidden');
+  document.getElementById('gsearch-results')?.classList.add('hidden');
+};
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.notif-wrap')) document.getElementById('notif-panel')?.classList.add('hidden');
+  if (!e.target.closest('.gsearch-wrap')) document.getElementById('gsearch-results')?.classList.add('hidden');
+});
+
+// ── البحث الشامل ──────────────────────────────
+function initGlobalSearch() {
+  const input = document.getElementById('gsearch-input');
+  const box = document.getElementById('gsearch-results');
+  if (!input) return;
+  input.addEventListener('input', debounce(async () => {
+    const term = input.value.trim();
+    if (term.length < 2) { box.classList.add('hidden'); return; }
+    const res = await DB.globalSearch(term);
+    const groups = [
+      { key: 'materials', label: 'المواد', render: m => `<div class="gsearch-item" onclick="go('materials');document.getElementById('gsearch-results').classList.add('hidden')">${m.store_num} — ${m.name}</div>` },
+      { key: 'customers', label: 'الزبائن', render: c => `<div class="gsearch-item" onclick="go('customers');document.getElementById('gsearch-results').classList.add('hidden')">${c.code} — ${c.name}</div>` },
+      { key: 'receipts', label: 'فواتير الاستلام', render: r => `<div class="gsearch-item" onclick="go('docs');document.getElementById('gsearch-results').classList.add('hidden')"><b>${r.doc_num}</b><small>${r.doc_date} — ${fmtIQD(r.total)}</small></div>` },
+      { key: 'issues', label: 'فواتير الإصدار', render: r => `<div class="gsearch-item" onclick="go('docs');document.getElementById('gsearch-results').classList.add('hidden')"><b>${r.doc_num}</b><small>${r.doc_date} — ${fmtIQD(r.total)}</small></div>` },
+    ];
+    const html = groups.map(g => (res[g.key] || []).length ? `<div class="gsearch-group-lbl">${g.label}</div>${res[g.key].map(g.render).join('')}` : '').join('');
+    box.innerHTML = html || '<div class="notif-empty">لا نتائج</div>';
+    box.classList.remove('hidden');
+  }, 300));
+}
+// (debounce مُعرَّفة أصلاً بملف inventory.js، تُستخدم هنا كما هي)
+
 // ── الإقلاع ──────────────────────────────
 async function boot() {
   if (localStorage.getItem('wh-theme') === 'light') document.documentElement.classList.add('light');
@@ -597,6 +645,8 @@ async function boot() {
   registerStubPages();
   renderSidebar();
   renderTopMenu();
+  initGlobalSearch();
+  refreshNotifPanel();
   go('dashboard');
 }
 window.showPending = function showPending() {

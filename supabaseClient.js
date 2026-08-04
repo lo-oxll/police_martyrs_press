@@ -1768,6 +1768,69 @@ const DB = {
   },
 
   // ══════════════════════════════════════════════════════════════════
+  //  البحث الشامل + مركز التنبيهات الموحَّد + سجل جلسات الدخول
+  // ══════════════════════════════════════════════════════════════════
+  async globalSearch(term) {
+    if (!term || term.trim().length < 2) return {};
+    const t = `%${term.trim()}%`;
+    const [materials, customers, receipts, issues] = await Promise.all([
+      sb.from('materials').select('id, store_num, name').or(`name.ilike.${t},store_num.ilike.${t}`).limit(5),
+      sb.from('customers').select('id, code, name').or(`name.ilike.${t},code.ilike.${t}`).limit(5),
+      sb.from('receipt_docs').select('id, doc_num, doc_date, total').ilike('doc_num', t).limit(5),
+      sb.from('issue_docs').select('id, doc_num, doc_date, total').ilike('doc_num', t).limit(5),
+    ]);
+    return { materials: materials.data || [], customers: customers.data || [], receipts: receipts.data || [], issues: issues.data || [] };
+  },
+
+  // يجمع كل التنبيهات المتفرّقة (مخزون منخفض، موافقات معلّقة، سندات ديون متأخرة، مهام مستحقة) بمصدر واحد
+  async unifiedNotifications() {
+    const items = [];
+    try {
+      const low = await this.lowStock();
+      if (low.length) items.push({ type: 'warning', label: `${low.length} مادة تحتاج إعادة طلب`, page: 'lowstock' });
+    } catch (e) {}
+    if (ME && can('admin', 'manager')) {
+      try {
+        const pu = await this.listPendingUsers();
+        if (pu.length) items.push({ type: 'info', label: `${pu.length} مستخدم بانتظار الموافقة`, page: 'users' });
+      } catch (e) {}
+    }
+    if (ME && can('admin')) {
+      try {
+        const pe = await this.listPendingEntries('pending');
+        if (pe.length) items.push({ type: 'info', label: `${pe.length} قيد بانتظار الموافقة`, page: 'approvals' });
+      } catch (e) {}
+    }
+    try {
+      const { notes } = await this.debtNoteReport();
+      const overdue = notes.filter(n => n.overdueDays > 0);
+      if (overdue.length) items.push({ type: 'danger', label: `${overdue.length} سند دين متأخر عن الاستحقاق`, page: 'debtnotereports' });
+    } catch (e) {}
+    try {
+      const { data: tasks } = await sb.from('tasks').select('id, due_date').neq('status', 'done').lte('due_date', todayISO());
+      if (tasks && tasks.length) items.push({ type: 'warning', label: `${tasks.length} مهمة مستحقة أو متأخرة`, page: 'tasks' });
+    } catch (e) {}
+    return items;
+  },
+
+  // ── سجل جلسات الدخول: يُستنتَج من سجل المراجعة (audit_log) الموجود أصلاً — بلا جدول جديد ─────────────────────────────
+  async loginSessionsLog(limit = 100) {
+    const { data, error } = await sb.from('audit_log').select('*, profiles(full_name,role)')
+      .in('action', ['login', 'logout']).order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+
+  // ── ترقيم تلقائي حقيقي: يقترح الرقم التالي حسب البادئة المحفوظة بالإعدادات + عدد الوثائق الحالي (قابل للتعديل يدوياً) ─────────────────────────────
+  async nextDocNumSuggestion(docType) {
+    const key = docType === 'receive' ? 'invoice_num_prefix_receive' : 'invoice_num_prefix_issue';
+    const table = docType === 'receive' ? 'receipt_docs' : 'issue_docs';
+    const [prefixSetting, countRes] = await Promise.all([this.getSetting(key), sb.from(table).select('id', { count: 'exact', head: true })]);
+    const prefix = prefixSetting || (docType === 'receive' ? 'REC-' : 'ISS-');
+    const next = (countRes.count || 0) + 1;
+    return prefix + String(next).padStart(6, '0');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
   //  تقارير مستودعية إضافية + تصنيع موسّع
   // ══════════════════════════════════════════════════════════════════
   // ── كشف تفصيلي للمستودعات: كل المخازن جنباً لجنب (قيمة الرصيد + حركة الفترة) ─────────────────────────────
