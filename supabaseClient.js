@@ -154,30 +154,47 @@ const DB = {
 
   // ── استيراد أرصدة التدوير (الافتتاحية) حسب المخزن ─────────────────────────────
   // rows: [{ store_num, qty, unit_price }] — يُحدَّث رصيد material_stock فوراً + يُسجَّل بجدول opening_balances لهذه السنة
+  // يستورد أرصدة افتتاحية بمطابقة اسم المادة (وليس الرقم المخزني). المادة غير الموجودة بدليل المواد
+  // تُضاف تلقائياً ببطاقة جديدة (رقم مخزني مولَّد + الوحدة من الملف)، لكن رصيدها الافتتاحي يبقى صفراً
+  // عمداً (تحتاج مراجعة يدوية) — لا يُستورَد لها أي كمية/سعر من الملف تجنّباً لتحميل بيانات غير موثوقة.
   async importOpeningBalancesForWarehouse(fiscalYearId, warehouseId, rows) {
     const session = await this.currentSession();
-    let ok = 0, fail = 0; const errors = [];
+    let ok = 0, fail = 0, autoCreated = 0; const errors = [];
     let seq = 1;
     for (const r of rows) {
       try {
-        const { data: mat, error: e1 } = await sb.from('materials').select('id').eq('store_num', r.store_num).maybeSingle();
+        const name = (r.name || '').trim();
+        if (!name) throw new Error('اسم المادة فارغ');
+        let { data: mat, error: e1 } = await sb.from('materials').select('id').ilike('name', name).maybeSingle();
         if (e1) throw e1;
-        if (!mat) { throw new Error('الرقم المخزني غير موجود بدليل المواد'); }
+
+        let qty = Number(r.qty) || 0;
+        let unitPrice = Number(r.unit_price) || (r.value && qty ? Number(r.value) / qty : 0);
+        const balanceDate = r.balance_date || todayISO();
+
+        if (!mat) {
+          // مادة غير موجودة: أضفها ببطاقة جديدة، وصفّر رصيدها الافتتاحي عمداً بدل استيراد أرقام غير موثوقة
+          const storeNum = 'AUTO-' + Date.now().toString().slice(-6) + '-' + seq;
+          const { data: newMat, error: e0 } = await sb.from('materials').insert({ store_num: storeNum, name, unit: r.unit || 'قطعة', category: null, min_qty: 0, is_active: true }).select('id').single();
+          if (e0) throw e0;
+          mat = newMat;
+          qty = 0; unitPrice = 0; autoCreated++;
+        }
 
         const { error: e2 } = await sb.from('material_stock')
-          .upsert({ material_id: mat.id, warehouse_id: warehouseId, qty_on_hand: r.qty, avg_price: r.unit_price }, { onConflict: 'material_id,warehouse_id' });
+          .upsert({ material_id: mat.id, warehouse_id: warehouseId, qty_on_hand: qty, avg_price: unitPrice }, { onConflict: 'material_id,warehouse_id' });
         if (e2) throw e2;
 
         const { error: e3 } = await sb.from('opening_balances').insert({
           fiscal_year_id: fiscalYearId, seq: seq++, material_id: mat.id, warehouse_id: warehouseId,
-          qty: r.qty, unit_price: r.unit_price, balance_date: todayISO(), created_by: session?.user?.id,
+          qty, unit_price: unitPrice, balance_date: balanceDate, created_by: session?.user?.id,
         });
         if (e3) throw e3;
         ok++;
-      } catch (e) { fail++; errors.push(`${r.store_num}: ${e.message}`); }
+      } catch (e) { fail++; errors.push(`${r.name || '؟'}: ${e.message}`); }
     }
-    await this.log('import_opening_balances', 'opening_balances', null, { warehouse_id: warehouseId, fiscal_year_id: fiscalYearId, ok, fail });
-    return { ok, fail, errors };
+    await this.log('import_opening_balances', 'opening_balances', null, { warehouse_id: warehouseId, fiscal_year_id: fiscalYearId, ok, fail, autoCreated });
+    return { ok, fail, errors, autoCreated };
   },
 
   // ── وثائق الاستلام ─────────────────────────────
@@ -1828,6 +1845,53 @@ const DB = {
     const prefix = prefixSetting || (docType === 'receive' ? 'REC-' : 'ISS-');
     const next = (countRes.count || 0) + 1;
     return prefix + String(next).padStart(6, '0');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  //  النسخ الاحتياطي والاستعادة
+  //  نسخة احتياطية كاملة = قراءة فقط لكل الجداول (آمنة دائماً). الاستعادة
+  //  تقتصر عمداً على الجداول المرجعية (Upsert) — استعادة الجداول المالية/
+  //  الحركية (فواتير، قيود، أرصدة) عبر الواجهة خطر (تكرار ترحيل، تعارض
+  //  تسلسلات، كسر قيود الربط) وتحتاج أداة قاعدة بيانات مباشرة (pg_dump/
+  //  Point-in-time Recovery بلوحة Supabase) بإشراف مدير قاعدة بيانات.
+  // ══════════════════════════════════════════════════════════════════
+  BACKUP_ALL_TABLES: [
+    'app_settings','archive_cards','audit_log','branches','budget_rollover_log','budgets','cash_reconciliations',
+    'cash_transactions','chart_of_accounts','colors','contracts','cost_centers','count_items','customers','debt_notes',
+    'depreciation_runs','discount_cards','employee_loans','employees','fiscal_years','fixed_assets',
+    'indirect_expense_allocation_items','indirect_expense_allocations','internal_messages','invoice_template_items',
+    'invoice_templates','issue_docs','issue_items','journal_entries','journal_lines','manufacturing_model_components',
+    'manufacturing_models','manufacturing_orders','material_brands','material_categories','material_similarity_groups',
+    'material_similarity_items','material_stock','materials','opening_balances','page_permissions','payroll_items',
+    'payroll_runs','pending_journal_entries','petty_cash_advances','petty_cash_items','petty_cash_vouchers',
+    'physical_counts','profit_partners','projects','receipt_docs','receipt_items','regions','rental_items',
+    'sales_purchase_order_items','sales_purchase_orders','sales_reps','shipping_receipts','sizes',
+    'stock_transfer_items','stock_transfers','streets','suppliers','tasks','warehouses',
+  ],
+  // الجداول المرجعية الآمنة للاستعادة (Upsert) من نسخة احتياطية — كل واحد بعمود مفتاحه الفريد للمطابقة
+  RESTORABLE_REFERENCE_TABLES: {
+    materials: 'store_num', warehouses: 'code', chart_of_accounts: 'code', customers: 'code',
+    projects: 'code', branches: 'code', suppliers: 'id', material_categories: 'code',
+    material_brands: 'id', colors: 'id', sizes: 'id', discount_cards: 'code', sales_reps: 'code',
+  },
+  async fullBackupExport(onProgress) {
+    const bundle = { exported_at: new Date().toISOString(), app: window.APP_CONFIG?.APP_NAME || '', tables: {} };
+    let done = 0;
+    for (const t of this.BACKUP_ALL_TABLES) {
+      const { data, error } = await sb.from(t).select('*');
+      bundle.tables[t] = error ? { __error: error.message } : (data || []);
+      done++; if (onProgress) onProgress(done, this.BACKUP_ALL_TABLES.length, t);
+    }
+    return bundle;
+  },
+  async restoreReferenceTable(tableName, rows) {
+    const key = this.RESTORABLE_REFERENCE_TABLES[tableName];
+    if (!key) throw new Error('هذا الجدول غير مسموح باستعادته من الواجهة');
+    if (!rows || !rows.length) return { ok: 0, fail: 0 };
+    const { error } = await sb.from(tableName).upsert(rows, { onConflict: key });
+    if (error) throw friendlyDbError(error);
+    await this.log('restore_reference_table', tableName, null, { rows: rows.length });
+    return { ok: rows.length, fail: 0 };
   },
 
   // ══════════════════════════════════════════════════════════════════

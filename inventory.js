@@ -647,7 +647,8 @@ async function renderDocDetail(root, tab, id, fyId, seq) {
         <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}','${fyId}')">↩ سجل الوثائق</button>
         <button class="btn btn-o btn-sm" ${!prev ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${prev ? `viewDoc('${tab}','${prev.id}','${fyId}')` : ''}">⟵ السابق</button>
         <button class="btn btn-o btn-sm" ${!next ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${next ? `viewDoc('${tab}','${next.id}','${fyId}')` : ''}">التالي ⟶</button>
-        <button class="btn btn-p btn-sm" onclick="printCurrentDoc()">🖨 طباعة / PDF</button>
+        <button class="btn btn-p btn-sm" onclick="printCurrentDoc()">🖨 طباعة</button>
+        <button class="btn btn-o btn-sm" onclick="exportCurrentDocPDF()">⬇ PDF</button>
         ${isR && doc.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${doc.attachment_path}')">📎 المرفق</button>` : ''}
         ${can('admin') && !doc.is_cancelled ? `<button class="btn btn-d btn-sm" onclick="deleteDocConfirm('${tab}','${id}','${fyId}')">🗑 حذف الوثيقة</button>` : ''}
       </div></div>
@@ -675,6 +676,10 @@ window.deleteDocConfirm = async (tab, id, fyId) => {
 window.printCurrentDoc = () => {
   const v = window.__currentDocView;
   if (v) printDocument(v.doc, v.items, v.isR);
+};
+window.exportCurrentDocPDF = () => {
+  const v = window.__currentDocView;
+  if (v) exportDocumentPDF(v.doc, v.items, v.isR);
 };
 
 window.viewAttachment = async (path) => {

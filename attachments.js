@@ -76,11 +76,12 @@ PAGE_RENDER.archive = async (root) => {
     <tbody>${list.map(a => `<tr><td class="doc-num">${a.doc_num}</td><td>${a.file_url?`<a href="${a.file_url}" target="_blank">${a.title}</a>`:a.title}</td>
       <td>${a.category||'—'}</td><td class="mono">${a.archive_date}</td><td class="mono">${a.related_ref||'—'}</td>
       <td><button class="btn btn-o btn-sm" onclick='printArchiveCard(${JSON.stringify(a).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
+      <button class="btn btn-o btn-sm" onclick='exportArchiveCardPDF(${JSON.stringify(a).replace(/'/g,"&#39;")})'>⬇ PDF</button>
       ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteArchiveConfirm('${a.id}','${a.title.replace(/'/g,"")}')">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد بطاقات أرشيف بعد</td></tr>'}
     </tbody></table></div></div>
     <div id="archive-print-area"></div>`;
 };
-window.printArchiveCard = async (a) => {
+async function buildArchiveCardPrintArea(a) {
   const html = `<div style="padding:20px 4px;font-size:13px;line-height:2">
       <div>العنوان: <b>${a.title}</b></div>
       <div>التصنيف: ${a.category||'—'}</div>
@@ -90,8 +91,9 @@ window.printArchiveCard = async (a) => {
       ${a.notes ? `<div>ملاحظات: ${a.notes}</div>` : ''}
     </div>`;
   await renderPrintArea(`بطاقة أرشيف — ${a.doc_num}`, html);
-  window.print();
-};
+}
+window.printArchiveCard = async (a) => { await buildArchiveCardPrintArea(a); window.print(); };
+window.exportArchiveCardPDF = async (a) => { await buildArchiveCardPrintArea(a); exportPrintAreaToPDF(`أرشيف_${a.doc_num}`); };
 window.searchArchive = async (term) => {
   const list = await DB.listArchiveCards(term);
   document.getElementById('arc-list').innerHTML = `<div class="itw"><table><thead><tr><th>الرقم</th><th>العنوان</th><th>التصنيف</th><th>التاريخ</th><th>مرجع</th><th></th></tr></thead>

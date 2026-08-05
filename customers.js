@@ -70,6 +70,7 @@ async function renderCashDocPage(root, { pageTitle, subtitle, type, docKind, par
       <td class="mono gold-txt">${fmtIQD(d.amount)}</td><td>${d.description||'—'}</td>
       <td style="display:flex;gap:6px">
         <button class="btn btn-o btn-sm" onclick='printCashVoucher(${JSON.stringify({ pageTitle, trans_date: d.trans_date, party: partyName, amount: d.amount, description: d.description }).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
+        <button class="btn btn-o btn-sm" onclick='exportCashVoucherPDF(${JSON.stringify({ pageTitle, trans_date: d.trans_date, party: partyName, amount: d.amount, description: d.description }).replace(/'/g,"&#39;")})'>⬇ PDF</button>
         ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteCashDocConfirm('${d.id}','${d.journal_entry_id||''}','${(d.description||'').replace(/'/g,"")}')">حذف</button>` : ''}
       </td>
       </tr>`;
@@ -80,7 +81,7 @@ async function renderCashDocPage(root, { pageTitle, subtitle, type, docKind, par
   document.getElementById('btn-new-cashdoc')?.addEventListener('click', () => openCashDocModal({ type, docKind, partyLabel, allowAccount, customers, onSaved: () => go(window.__currentPageId) }));
 }
 
-window.printCashVoucher = async (d) => {
+async function buildCashVoucherPrintArea(d) {
   const html = `<div style="padding:20px 4px;font-size:13px;line-height:2">
       <div>التاريخ: <b>${d.trans_date}</b></div>
       <div>الطرف: <b>${d.party}</b></div>
@@ -89,8 +90,9 @@ window.printCashVoucher = async (d) => {
       <div style="margin-top:40px;display:flex;justify-content:space-between"><span>توقيع المستلم: ____________</span><span>توقيع المُعتمِد: ____________</span></div>
     </div>`;
   await renderPrintArea(d.pageTitle, html);
-  window.print();
-};
+}
+window.printCashVoucher = async (d) => { await buildCashVoucherPrintArea(d); window.print(); };
+window.exportCashVoucherPDF = async (d) => { await buildCashVoucherPrintArea(d); exportPrintAreaToPDF(`سند_${d.trans_date}`); };
 window.openCashDocModal = async ({ type, docKind, partyLabel, allowAccount, customers, onSaved }) => {
   const accounts = allowAccount ? await DB.chartOfAccounts() : [];
   showModal(`${partyLabel} جديد`, `

@@ -2,6 +2,79 @@
 //  المرحلة ٨: البريد الداخلي + الباركود + صيانة الملفات + خدمات المزامنة + استيراد إكسل
 // ══════════════════════════════════════════════════════════════════
 
+// ── النسخ الاحتياطي والاستعادة ─────────────────────────────
+PAGE_RENDER.backuprestore = async (root) => {
+  if (!can('admin')) { root.innerHTML = '<div class="card"><div class="ec">هذه الصفحة لمدير النظام فقط</div></div>'; return; }
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">النسخ الاحتياطي والاستعادة</div><div class="ph-sub">نسخة كاملة للقراءة، واستعادة مقيَّدة بالبيانات المرجعية فقط لحماية سلامة السجلات المالية</div></div></div>
+
+    <div class="card">
+      <div class="card-title">تنزيل نسخة احتياطية كاملة</div>
+      <div class="ph-sub" style="margin-bottom:12px">يقرأ كل جداول النظام (حسب صلاحياتك الحالية) ويحزمها بملف JSON واحد قابل للتنزيل. عملية قراءة فقط، آمنة دائماً.</div>
+      <button class="btn btn-p" onclick="runFullBackup()">⬇ تنزيل نسخة احتياطية الآن</button>
+      <div id="bk-progress" style="margin-top:10px;font-size:12px;color:var(--ink3)"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">استعادة بيانات مرجعية</div>
+      <div class="ec" style="text-align:right;padding:12px;background:rgba(212,162,76,.08);border-radius:8px;margin-bottom:14px;color:var(--warn)">
+        ⚠️ لأسباب أمان محاسبي، الاستعادة من الواجهة تقتصر عمداً على الجداول المرجعية (المواد، الزبائن، دليل الحسابات، المخازن، الموردين...) —
+        <b>لا تشمل</b> الفواتير أو القيود أو الأرصدة أو أي بيانات مالية حركية. استعادة تلك البيانات (كارثة حقيقية/استرجاع كامل) تحتاج أداة قاعدة بيانات مباشرة
+        (Point-in-time Recovery بلوحة Supabase أو pg_restore) بإشراف مدير قاعدة بيانات — التلقائية من الواجهة لهذه الجداول خطر حقيقي (ازدواج ترحيل، كسر تسلسلات، تعارض قيود).
+      </div>
+      <div class="fgroup" style="margin-bottom:12px"><label>ملف النسخة الاحتياطية (JSON)</label><input type="file" id="rs-file" accept=".json"></div>
+      <div id="rs-tables"></div>
+      <div class="form-foot"><button class="btn btn-d" id="rs-run-btn" style="display:none" onclick="runRestore()">استعادة الجداول المحدَّدة</button></div>
+      <div id="rs-result" style="margin-top:12px;font-size:12.5px"></div>
+    </div>`;
+};
+window.runFullBackup = async () => {
+  const box = document.getElementById('bk-progress');
+  try {
+    const bundle = await DB.fullBackupExport((done, total, table) => { box.textContent = `جارِ التصدير... (${done}/${total}) ${table}`; });
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `backup_${todayISO()}.json`; a.click();
+    URL.revokeObjectURL(url);
+    box.textContent = '✅ تم تنزيل النسخة الاحتياطية الكاملة بنجاح';
+    toast('تم تنزيل النسخة الاحتياطية', 's');
+  } catch (e) { box.textContent = ''; toast('تعذر التصدير: ' + e.message, 'e'); }
+};
+
+let __restoreBundle = null;
+document.addEventListener('change', (e) => {
+  if (e.target?.id !== 'rs-file') return;
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      __restoreBundle = JSON.parse(reader.result);
+      const restorable = Object.keys(DB.RESTORABLE_REFERENCE_TABLES).filter(t => __restoreBundle.tables?.[t]?.length);
+      const box = document.getElementById('rs-tables');
+      if (!restorable.length) { box.innerHTML = '<div class="ec">لا توجد جداول مرجعية قابلة للاستعادة بهذا الملف</div>'; document.getElementById('rs-run-btn').style.display = 'none'; return; }
+      box.innerHTML = `<label style="font-size:11px;color:var(--ink2);font-weight:600;display:block;margin:10px 0 6px">اختر الجداول المرجعية المطلوب استعادتها</label>
+        ${restorable.map(t => `<label style="display:flex;align-items:center;gap:6px;padding:5px 0"><input type="checkbox" class="rs-tbl" value="${t}" style="width:auto"> ${t} (${__restoreBundle.tables[t].length} سجل)</label>`).join('')}`;
+      document.getElementById('rs-run-btn').style.display = 'inline-block';
+    } catch (err) { toast('ملف JSON غير صالح: ' + err.message, 'e'); }
+  };
+  reader.readAsText(file);
+});
+window.runRestore = async () => {
+  const tables = [...document.querySelectorAll('.rs-tbl:checked')].map(el => el.value);
+  if (!tables.length) { toast('اختر جدولاً واحداً على الأقل', 'e'); return; }
+  if (!confirm(`سيتم دمج (Upsert) بيانات ${tables.length} جدول من الملف مع البيانات الحالية — السجلات المطابقة بالمفتاح الفريد ستُحدَّث، والجديدة تُضاف. هذا لا يحذف أي بيانات حالية. متابعة؟`)) return;
+  const box = document.getElementById('rs-result');
+  box.innerHTML = 'جارِ الاستعادة...';
+  let log = [];
+  for (const t of tables) {
+    try { const res = await DB.restoreReferenceTable(t, __restoreBundle.tables[t]); log.push(`✅ ${t}: ${res.ok} سجل`); }
+    catch (e) { log.push(`⛔ ${t}: ${e.message}`); }
+  }
+  box.innerHTML = log.join('<br>');
+  toast('اكتملت عملية الاستعادة', 's');
+};
+
 // ── سجل جلسات الدخول (يُستنتَج من سجل المراجعة الموجود أصلاً) ─────────────────────────────
 PAGE_RENDER.loginsessions = async (root) => {
   const rows = await DB.loginSessionsLog();

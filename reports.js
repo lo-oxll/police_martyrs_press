@@ -143,7 +143,7 @@ window.printReport = async (tab) => {
 };
 function reportTitle(tab) { return tab === 'tb' ? 'ميزان المراجعة' : tab === 'bs' ? 'الميزانية العمومية' : tab === 'trading' ? 'حساب المتاجرة' : 'الأرباح والخسائر'; }
 
-async function printDocument(doc, items, isReceipt) {
+async function buildDocPrintArea(doc, items, isReceipt) {
   const rows = items.map((it, i) => `<tr><td>${i+1}</td><td class="mono">${it.materials.store_num}</td><td>${it.materials.name}</td>
     <td>${fmtQty(it.qty)} ${it.materials.unit}</td><td class="mono">${fmt(it.unit_price)}</td><td class="mono">${fmt(it.total)}</td></tr>`).join('');
   const html = `
@@ -159,9 +159,11 @@ async function printDocument(doc, items, isReceipt) {
       <div>توقيع أمين المخزن: ____________________</div><div>توقيع المحاسب: ____________________</div><div>توقيع المدير: ____________________</div>
     </div>`;
   await renderPrintArea((isReceipt ? 'وثيقة استلام مخزني' : 'وثيقة إصدار مخزني'), html);
-  window.print();
 }
+async function printDocument(doc, items, isReceipt) { await buildDocPrintArea(doc, items, isReceipt); window.print(); }
+async function exportDocumentPDF(doc, items, isReceipt) { await buildDocPrintArea(doc, items, isReceipt); exportPrintAreaToPDF(`${isReceipt ? 'استلام' : 'إصدار'}_${doc.doc_num}`); }
 window.printDocument = printDocument;
+window.exportDocumentPDF = exportDocumentPDF;
 
 // ── إعدادات قالب الطباعة (شعار + تذييل) — تُجلب مرة وتُخزَّن مؤقتاً بالجلسة ──────────────────────────────
 window.__printSettings = window.__printSettings || null;

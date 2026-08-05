@@ -13,13 +13,16 @@ const XLS_COMMON_ALIASES = {
   category: ['category','التصنيف','تصنيف','الصنف','type','فئة','المجموعة','group'],
   min_qty: ['min_qty','minqty','الحد الأدنى','حد ادنى','حد الطلب','نقطة اعادة الطلب','reorder','reorder point','minimum','الحد الادنى للطلب'],
   barcode: ['barcode','باركود','الباركود','رمز الباركود'],
-  qty: ['qty','quantity','الكمية','كمية','الكميه','الكمية الافتتاحية'],
+  qty: ['qty','quantity','الكمية','كمية','الكميه','الكمية الافتتاحية','العدد','عدد'],
   unit_price: ['unit_price','price','cost','السعر','سعر الوحدة','سعر','التكلفة','سعر الشراء','سعر الكلفة'],
+  value: ['value','القيمة','قيمة','total','amount','المبلغ','الاجمالي','الإجمالي'],
+  balance_date: ['date','التاريخ','تاريخ','balance_date','تاريخ الرصيد'],
   notes: ['notes','note','ملاحظات','ملاحظة','الملاحظات','remarks'],
 };
 const XLS_FIELD_LABELS_ALL = {
   store_num: 'الرقم المخزني', name: 'الاسم', unit: 'الوحدة', category: 'التصنيف', min_qty: 'الحد الأدنى',
-  barcode: 'الباركود', qty: 'الكمية', unit_price: 'السعر/التكلفة', notes: 'ملاحظات', __ignore: 'تجاهل هذا العمود',
+  barcode: 'الباركود', qty: 'الكمية', unit_price: 'السعر/التكلفة', value: 'القيمة', balance_date: 'التاريخ',
+  notes: 'ملاحظات', __ignore: 'تجاهل هذا العمود',
 };
 function xlsNormalizeHeader(h) {
   return String(h || '').trim().toLowerCase().replace(/[\u064B-\u065F]/g, '').replace(/\s+/g, ' ');
@@ -318,6 +321,7 @@ const PAGES = [
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
     { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
     { id: 'loginsessions', label: 'سجل جلسات الدخول', icon: '🔑', roles: ['admin','manager'] },
+    { id: 'backuprestore', label: 'النسخ الاحتياطي والاستعادة', icon: '💾', roles: ['admin'] },
   ]},
 ];
 
@@ -610,6 +614,42 @@ function initGlobalSearch() {
   }, 300));
 }
 // (debounce مُعرَّفة أصلاً بملف inventory.js، تُستخدم هنا كما هي)
+
+// ── تصدير PDF حقيقي: يلتقط نفس محتوى #print-area (بعد تعبئته عبر renderPrintArea) كصورة عالية الدقة
+// ويُدرجها بملف PDF متعدد الصفحات — هذا الأسلوب يتفادى مشكلة عدم دعم jsPDF للعربية بخطوطه الافتراضية،
+// لأن المتصفح نفسه يرسم النص العربي بصورة صحيحة والمكتبة تلتقطها كصورة بدل التعامل مع الحروف مباشرة.
+async function exportPrintAreaToPDF(filename) {
+  const area = document.getElementById('print-area');
+  if (!area || !area.innerHTML.trim()) { toast('لا يوجد محتوى معدّ للطباعة بعد', 'e'); return; }
+  if (!window.html2canvas || !window.jspdf) { toast('مكتبة تصدير PDF لم تُحمَّل بعد — تحقق من الاتصال بالإنترنت وأعد المحاولة', 'e'); return; }
+  const prevCss = area.style.cssText;
+  area.style.cssText = 'display:block;position:fixed;top:0;left:-9999px;width:750px;background:#fff;padding:20px;color:#111;direction:rtl;z-index:-1';
+  await new Promise(r => setTimeout(r, 60));
+  try {
+    const canvas = await html2canvas(area, { scale: 2, backgroundColor: '#ffffff' });
+    const imgData = canvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'a4' });
+    const pageWidth = pdf.internal.pageSize.getWidth(), pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth - 40;
+    const imgHeight = canvas.height * (imgWidth / canvas.width);
+    let heightLeft = imgHeight, position = 20;
+    pdf.addImage(imgData, 'PNG', 20, position, imgWidth, imgHeight);
+    heightLeft -= (pageHeight - 40);
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight + 20;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 20, position, imgWidth, imgHeight);
+      heightLeft -= (pageHeight - 40);
+    }
+    pdf.save(filename.endsWith('.pdf') ? filename : filename + '.pdf');
+  } catch (e) {
+    toast('تعذر توليد PDF: ' + e.message, 'e');
+  } finally {
+    area.style.cssText = prevCss;
+  }
+}
+window.exportPrintAreaToPDF = exportPrintAreaToPDF;
 
 // ── الإقلاع ──────────────────────────────
 async function boot() {

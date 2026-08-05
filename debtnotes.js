@@ -12,6 +12,7 @@ PAGE_RENDER.debtnotes = async (root) => {
       <td>${n.customers?.name || n.counterparty_name || '—'}</td><td class="mono gold-txt">${fmtIQD(n.amount)}</td><td>${statusChip(n.status)}</td>
       <td style="display:flex;gap:6px">
         <button class="btn btn-o btn-sm" onclick='printDebtNote(${JSON.stringify(n).replace(/'/g,"&#39;")})'>🖨 طباعة</button>
+        <button class="btn btn-o btn-sm" onclick='exportDebtNotePDF(${JSON.stringify(n).replace(/'/g,"&#39;")})'>⬇ PDF</button>
         ${n.status==='open' && can('admin','accountant') ? `<button class="btn btn-s btn-sm" onclick="settleDebtNotePrompt('${n.id}','${n.note_type}')">تسوية</button>
         <button class="btn btn-d btn-sm" onclick="cancelDebtNoteConfirm('${n.id}')">إلغاء</button>` : ''}
         ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="hardDeleteDebtNoteConfirm('${n.id}','${n.doc_num}','${n.journal_entry_id||''}','${n.settlement_journal_entry_id||''}')">🗑 حذف نهائي</button>` : ''}
@@ -24,7 +25,7 @@ PAGE_RENDER.debtnotes = async (root) => {
     <div class="card"><div class="card-title">ديون علينا (Payable)</div>${renderTable(payable)}</div>
     <div id="debtnote-print-area"></div>`;
 };
-window.printDebtNote = async (n) => {
+async function buildDebtNotePrintArea(n) {
   const html = `<div style="padding:20px 4px;font-size:13px;line-height:2">
       <div>تاريخ الإصدار: <b>${n.issue_date}</b></div>
       <div>تاريخ الاستحقاق: <b>${n.due_date||'—'}</b></div>
@@ -35,8 +36,9 @@ window.printDebtNote = async (n) => {
       <div style="margin-top:40px;display:flex;justify-content:space-between"><span>توقيع الطرف: ____________</span><span>توقيع المُعتمِد: ____________</span></div>
     </div>`;
   await renderPrintArea(`سند دين ${n.note_type==='receivable'?'لنا':'علينا'} — ${n.doc_num}`, html);
-  window.print();
-};
+}
+window.printDebtNote = async (n) => { await buildDebtNotePrintArea(n); window.print(); };
+window.exportDebtNotePDF = async (n) => { await buildDebtNotePrintArea(n); exportPrintAreaToPDF(`سند_دين_${n.doc_num}`); };
 
 window.openDebtNoteModal = async (noteType) => {
   const [customers, accounts] = await Promise.all([DB.listCustomers(), DB.chartOfAccounts()]);

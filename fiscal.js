@@ -129,7 +129,9 @@ window.downloadOpeningBalanceTemplate = () => {
 };
 
 // ── استيراد أرصدة التدوير (الافتتاحية) لمخزن واحد من ملف إكسل — يقبل أي تصميم ملف ──────────────────────────────
-const OB_XLS_FIELDS = ['store_num', 'qty', 'unit_price'];
+// المطابقة تتم باسم المادة (وليس الرقم المخزني). أي مادة غير موجودة بدليل المواد تُضاف تلقائياً
+// ببطاقة جديدة، لكن رصيدها الافتتاحي يبقى صفراً عمداً — راجعها يدوياً بعد الاستيراد.
+const OB_XLS_FIELDS = ['name', 'unit', 'qty', 'unit_price', 'value', 'balance_date'];
 window.__obXlsState = null;
 
 window.analyzeOpeningBalancesExcel = async () => {
@@ -143,11 +145,12 @@ window.analyzeOpeningBalancesExcel = async () => {
     const { headers, rows } = await xlsReadFile(fileInput.files[0]);
     window.__obXlsState = { headers, rows };
     const mapping = xlsAutoDetectMapping(headers, OB_XLS_FIELDS);
-    const requiredOk = Object.values(mapping).includes('store_num');
+    const requiredOk = Object.values(mapping).includes('name');
     box.innerHTML = `
       <div class="card-title" style="margin-top:14px">مطابقة الأعمدة (${rows.length} صف مكتشَف) — عدّل أي اقتراح غير صحيح</div>
       ${xlsRenderMappingTable(headers, rows, OB_XLS_FIELDS, mapping, 'ob-map')}
-      ${!requiredOk ? '<div class="ec" style="color:var(--warn)">تنبيه: لم يُكتشَف عمود "الرقم المخزني" تلقائياً — تأكد من تعيينه يدوياً، فهو إلزامي.</div>' : ''}
+      ${!requiredOk ? '<div class="ec" style="color:var(--warn)">تنبيه: لم يُكتشَف عمود "المادة" (اسم المادة) تلقائياً — تأكد من تعيينه يدوياً، فهو إلزامي.</div>' : ''}
+      <div class="ec" style="color:var(--ink3);font-size:11.5px">ملاحظة: أي مادة باسم غير موجود بدليل المواد ستُضاف تلقائياً ببطاقة جديدة، برصيد افتتاحي صفر (بلا كمية أو سعر) — راجعها يدوياً بعد الاستيراد وأكمل رصيدها إذا لزم.</div>
       <div class="form-foot"><button class="btn btn-p btn-sm" onclick="runOpeningBalancesImport()">⬆ استيراد الأرصدة بهذه المطابقة</button></div>`;
   } catch (e) { box.innerHTML = `<div class="ec">تعذر تحليل الملف: ${e.message}</div>`; }
 };
@@ -157,21 +160,24 @@ window.runOpeningBalancesImport = async () => {
   const resEl = document.getElementById('ob-import-result');
   if (!window.__obXlsState) { toast('حلّل الملف أولاً', 'e'); return; }
   const headerByField = xlsReadMapping(window.__obXlsState.headers, 'ob-map');
-  if (!headerByField.store_num) { toast('يجب تعيين عمود "الرقم المخزني" على الأقل', 'e'); return; }
+  if (!headerByField.name) { toast('يجب تعيين عمود "المادة" (اسم المادة) على الأقل', 'e'); return; }
 
   const parsed = window.__obXlsState.rows.map(r => ({
-    store_num: String(r[headerByField.store_num] || '').trim(),
+    name: String(r[headerByField.name] || '').trim(),
+    unit: headerByField.unit ? String(r[headerByField.unit] || '').trim() : '',
     qty: headerByField.qty ? (Number(r[headerByField.qty]) || 0) : 0,
     unit_price: headerByField.unit_price ? (Number(r[headerByField.unit_price]) || 0) : 0,
-  })).filter(r => r.store_num);
+    value: headerByField.value ? (Number(r[headerByField.value]) || 0) : 0,
+    balance_date: headerByField.balance_date ? String(r[headerByField.balance_date] || '').trim() : '',
+  })).filter(r => r.name);
 
-  if (!parsed.length) { toast('لم يتم العثور على صفوف صالحة (تحقق من عمود الرقم المخزني)', 'e'); return; }
-  if (!confirm(`سيتم استيراد ${parsed.length} صف كأرصدة افتتاحية لهذا المخزن، وسيُحدَّث رصيد المخزون الحالي لهذه المواد بهذا المخزن مباشرة. متابعة؟`)) return;
+  if (!parsed.length) { toast('لم يتم العثور على صفوف صالحة (تحقق من عمود المادة)', 'e'); return; }
+  if (!confirm(`سيتم استيراد ${parsed.length} صف كأرصدة افتتاحية لهذا المخزن. المواد غير الموجودة بدليل المواد ستُضاف تلقائياً برصيد صفر. متابعة؟`)) return;
 
   resEl.innerHTML = 'جارِ الاستيراد...';
   try {
     const result = await DB.importOpeningBalancesForWarehouse(fyId, whId, parsed);
-    resEl.innerHTML = `✅ تم استيراد <b style="color:var(--ok)">${result.ok}</b> صف بنجاح${result.fail ? `، وفشل <b style="color:var(--danger)">${result.fail}</b> صف` : ''}.`;
+    resEl.innerHTML = `✅ تم استيراد <b style="color:var(--ok)">${result.ok}</b> صف بنجاح${result.fail ? `، وفشل <b style="color:var(--danger)">${result.fail}</b> صف` : ''}${result.autoCreated ? `، وأُضيفت <b style="color:var(--warn)">${result.autoCreated}</b> مادة جديدة برصيد صفر (راجعها يدوياً)` : ''}.`;
     if (result.errors.length) {
       resEl.innerHTML += `<div style="margin-top:8px;color:var(--danger);font-size:11.5px">${result.errors.slice(0,10).map(e=>`• ${e}`).join('<br>')}${result.errors.length>10 ? '<br>...' : ''}</div>`;
     }
