@@ -967,6 +967,23 @@ const DB = {
     return data;
   },
 
+  // ── صلاحيات مفصّلة لكل مستخدم (تجاوز فوق الدور) ─────────────────────────────
+  async listUserPermissions(userId) {
+    const { data, error } = await sb.from('user_permissions').select('perm_key,allowed').eq('user_id', userId);
+    if (error) throw friendlyDbError(error);
+    return data || [];
+  },
+  async setUserPermission(userId, permKey, allowed) {
+    const { error } = await sb.from('user_permissions').upsert({ user_id: userId, perm_key: permKey, allowed }, { onConflict: 'user_id,perm_key' });
+    if (error) throw friendlyDbError(error);
+    await this.log('set_user_permission', 'user_permissions', userId, { perm_key: permKey, allowed });
+  },
+  async clearUserPermission(userId, permKey) {
+    const { error } = await sb.from('user_permissions').delete().eq('user_id', userId).eq('perm_key', permKey);
+    if (error) throw friendlyDbError(error);
+    await this.log('clear_user_permission', 'user_permissions', userId, { perm_key: permKey });
+  },
+
   // ── سجل المراجعة ─────────────────────────────
   async log(action, entity, entity_id, details = {}) {
     const session = await this.currentSession();

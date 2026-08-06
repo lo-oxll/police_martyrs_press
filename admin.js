@@ -42,6 +42,7 @@ PAGE_RENDER.users = async (root) => {
         <td>${u.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
         ${isAdmin ? `<td>
           <button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button>
+          <button class="btn btn-o btn-sm" onclick="openUserPermissionsMatrix('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">🔐 صلاحيات مفصّلة</button>
           ${u.id !== ME.id ? `<button class="btn btn-d btn-sm" onclick="hardDeleteUserConfirm('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">🗑 حذف نهائي</button>` : ''}
         </td>` : ''}
       </tr>`).join('')}
@@ -114,6 +115,43 @@ window.hardDeleteUserConfirm = async (id, name) => {
     toast('تم حذف المستخدم نهائياً', 's');
     go('users');
   } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
+
+// صلاحيات مفصّلة لكل مستخدم: نعم/لا/افتراضي لكل صفحة × (دخول/إضافة/تعديل/حذف) — تجاوز فوق الدور
+window.openUserPermissionsMatrix = async (userId, userName) => {
+  const uperms = await DB.listUserPermissions(userId);
+  const allPages = PAGES.flatMap(sec => sec.items);
+  const map = {}; uperms.forEach(p => { map[p.perm_key] = p.allowed; });
+  const cellSelect = (key) => {
+    const v = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : 'default';
+    return `<select data-key="${key}" style="font-size:11px">
+      <option value="default" ${v==='default'?'selected':''}>افتراضي (حسب الدور)</option>
+      <option value="allow" ${v===true?'selected':''}>✅ مسموح</option>
+      <option value="deny" ${v===false?'selected':''}>❌ ممنوع</option>
+    </select>`;
+  };
+  const rowsHtml = allPages.map(p => {
+    const k = pagePermKeys(p.id);
+    return `<tr><td>${p.label}</td>
+      <td>${cellSelect(k.view)}</td><td>${cellSelect(k.create)}</td>
+      <td>${cellSelect(k.edit)}</td><td>${cellSelect(k.delete)}</td></tr>`;
+  }).join('');
+  showModal(`صلاحيات مفصّلة: ${userName}`, `
+    <div class="ph-sub" style="margin-bottom:10px">"افتراضي" = حسب دور المستخدم كالسابق. أي اختيار صريح هنا يتجاوز الدور لهذا المستخدم فقط، ولا يؤثر على بقية المستخدمين.</div>
+    <div class="itw" style="max-height:420px;overflow-y:auto"><table><thead><tr><th>الصفحة</th><th>دخول</th><th>إضافة</th><th>تعديل</th><th>حذف</th></tr></thead>
+    <tbody id="uperm-body">${rowsHtml}</tbody></table></div>
+  `, async () => {
+    const selects = document.querySelectorAll('#uperm-body select');
+    try {
+      for (const sel of selects) {
+        const key = sel.dataset.key, val = sel.value;
+        if (val === 'default') await DB.clearUserPermission(userId, key);
+        else await DB.setUserPermission(userId, key, val === 'allow');
+      }
+      toast('تم حفظ الصلاحيات المفصّلة', 's');
+      if (userId === ME.id) location.reload(); else go('users');
+    } catch (e) { toast('تعذر الحفظ: ' + e.message, 'e'); return false; }
+  });
 };
 
 // ── إعدادات حسابات فروقات الجرد الدوري (تُستخدم عند ترحيل قيد الجرد) ──────────────────────────────

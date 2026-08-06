@@ -130,6 +130,21 @@ window.friendlyStockError = friendlyStockError;
 const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب', manager: 'مدير', auditor: 'مدقق' };
 function can(...roles) { return ME && roles.includes(ME.role); }
 window.can = can;
+// ── صلاحيات مفصّلة لكل مستخدم (تجاوز فوق الدور) ──────────────────────────────
+let USER_PERM_OVERRIDES = {}; // { permKey: true/false } — لهذا المستخدم فقط، مُحمَّلة عند boot()
+// أدق من can(): يفحص تخصيص المستخدم الصريح أولاً، وإلا يرجع لدوره — ومستخدم بلا دور يُمنع من كل شيء
+function canDo(permKey, ...fallbackRoles) {
+  if (!ME) return false;
+  if (Object.prototype.hasOwnProperty.call(USER_PERM_OVERRIDES, permKey)) return USER_PERM_OVERRIDES[permKey];
+  if (!ME.role) return false;
+  return fallbackRoles.length ? fallbackRoles.includes(ME.role) : false;
+}
+window.canDo = canDo;
+// يبني مفاتيح الصلاحيات القياسية الأربعة لأي صفحة
+function pagePermKeys(pageId) {
+  return { view: `page:${pageId}`, create: `${pageId}:create`, edit: `${pageId}:edit`, delete: `${pageId}:delete` };
+}
+window.pagePermKeys = pagePermKeys;
 // صلاحية الخزينة والرواتب والسلفة المستديمة: مدير النظام دائماً، أو محاسب مُفعَّل له can_treasury تحديداً
 function canTreasury() { return ME && (ME.role === 'admin' || (ME.role === 'accountant' && ME.can_treasury)); }
 window.canTreasury = canTreasury;
@@ -329,8 +344,11 @@ const PAGES = [
 let PAGE_PERM_OVERRIDES = {}; // { 'pageId|role': true/false }
 function pageAllowedForRole(pageId, defaultRoles) {
   if (!ME) return false;
+  const userKey = `page:${pageId}`;
+  if (Object.prototype.hasOwnProperty.call(USER_PERM_OVERRIDES, userKey)) return USER_PERM_OVERRIDES[userKey];
   const key = pageId + '|' + ME.role;
   if (Object.prototype.hasOwnProperty.call(PAGE_PERM_OVERRIDES, key)) return PAGE_PERM_OVERRIDES[key];
+  if (!ME.role) return false;
   return !defaultRoles || can(...defaultRoles);
 }
 window.pageAllowedForRole = pageAllowedForRole;
@@ -671,6 +689,10 @@ async function boot() {
   try {
     const perms = await DB.listPagePermissions();
     PAGE_PERM_OVERRIDES = {}; perms.forEach(p => { PAGE_PERM_OVERRIDES[p.page_id + '|' + p.role] = p.allowed; });
+  } catch (e) { /* صامت */ }
+  try {
+    const uperms = await DB.listUserPermissions(ME.id);
+    USER_PERM_OVERRIDES = {}; uperms.forEach(p => { USER_PERM_OVERRIDES[p.perm_key] = p.allowed; });
   } catch (e) { /* صامت */ }
   try {
     const s = await DB.getAppSettingsBatch(['company_name', 'currency_label', 'nav_label_overrides']);
