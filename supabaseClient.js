@@ -199,7 +199,8 @@ const DB = {
 
   // ── وثائق الاستلام ─────────────────────────────
   async createReceipt(doc, items) {
-    const { data: rdoc, error: e1 } = await sb.from('receipt_docs').insert(doc).select().single();
+    const total = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
+    const { data: rdoc, error: e1 } = await sb.from('receipt_docs').insert({ ...doc, total }).select().single();
     if (e1) throw e1;
     const rows = items.map(it => ({ ...it, receipt_doc_id: rdoc.id }));
     const { error: e2 } = await sb.from('receipt_items').insert(rows);
@@ -229,18 +230,6 @@ const DB = {
     const { data, error } = await sb.from('receipt_items').select('*, materials(store_num,name,unit)')
       .eq('receipt_doc_id', receiptId);
     if (error) throw error; return data;
-  },
-  // حذف نهائي لوثيقة استلام — يشترط إلغاءها أولاً (is_cancelled=true) لضمان عكس أثر المخزون/القيد
-  // قبل الحذف الفعلي، ويحرّر رقم المستند لإعادة استخدامه بمستند جديد.
-  async hardDeleteReceipt(id, docNum) {
-    const { data: doc, error: e0 } = await sb.from('receipt_docs').select('is_cancelled').eq('id', id).single();
-    if (e0) throw friendlyDbError(e0);
-    if (!doc.is_cancelled) throw new Error('يجب إلغاء الوثيقة أولاً قبل حذفها نهائياً');
-    const { error: e1 } = await sb.from('receipt_items').delete().eq('receipt_doc_id', id);
-    if (e1) throw friendlyDbError(e1);
-    const { error: e2 } = await sb.from('receipt_docs').delete().eq('id', id);
-    if (e2) throw friendlyDbError(e2);
-    await this.log('hard_delete_receipt', 'receipt_docs', id, { doc_num: docNum });
   },
 
   // ── مرفقات وثائق الاستلام (Supabase Storage) ─────────────────────────────
@@ -281,7 +270,14 @@ const DB = {
       throw e2;
     }
     const { error: e3 } = await sb.rpc('fn_post_issue_journal', { p_issue_id: idoc.id });
-    if (e3) { await sb.from('issue_docs').delete().eq('id', idoc.id); throw e3; }
+    if (e3) { await sb.from('issue_items').delete().eq('issue_doc_id', idoc.id); await sb.from('issue_docs').delete().eq('id', idoc.id); throw e3; }
+    // سعر الإصدار (متوسط مرجّح) يُملأ بالتريغر أثناء الترحيل أعلاه — نجلبه الآن ونحسب الإجمالي الفعلي ونخزّنه
+    const { data: savedItems, error: e4 } = await sb.from('issue_items').select('qty, unit_price').eq('issue_doc_id', idoc.id);
+    if (!e4 && savedItems) {
+      const total = savedItems.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
+      await sb.from('issue_docs').update({ total }).eq('id', idoc.id);
+      idoc.total = total;
+    }
     await this.log('create_issue', 'issue_docs', idoc.id, { doc_num: doc.doc_num, items: items.length });
     return idoc;
   },
@@ -305,18 +301,6 @@ const DB = {
     const { data, error } = await sb.from('issue_items').select('*, materials(store_num,name,unit)')
       .eq('issue_doc_id', issueId);
     if (error) throw error; return data;
-  },
-  // حذف نهائي لوثيقة إصدار — يشترط إلغاءها أولاً (is_cancelled=true) لضمان عكس أثر المخزون/القيد
-  // قبل الحذف الفعلي، ويحرّر رقم المستند لإعادة استخدامه بمستند جديد.
-  async hardDeleteIssue(id, docNum) {
-    const { data: doc, error: e0 } = await sb.from('issue_docs').select('is_cancelled').eq('id', id).single();
-    if (e0) throw friendlyDbError(e0);
-    if (!doc.is_cancelled) throw new Error('يجب إلغاء الوثيقة أولاً قبل حذفها نهائياً');
-    const { error: e1 } = await sb.from('issue_items').delete().eq('issue_doc_id', id);
-    if (e1) throw friendlyDbError(e1);
-    const { error: e2 } = await sb.from('issue_docs').delete().eq('id', id);
-    if (e2) throw friendlyDbError(e2);
-    await this.log('hard_delete_issue', 'issue_docs', id, { doc_num: docNum });
   },
   // قائمة مرتّبة بالتسلسل الآلي الثابت (seq_no) — تُستخدم للتنقل التالي/السابق
   async docIdsOrdered(tab, fiscalYearId = null) {
