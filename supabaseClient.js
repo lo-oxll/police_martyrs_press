@@ -204,9 +204,13 @@ const DB = {
     if (e1) throw e1;
     const rows = items.map(it => ({ ...it, receipt_doc_id: rdoc.id }));
     const { error: e2 } = await sb.from('receipt_items').insert(rows);
-    if (e2) throw e2;
+    if (e2) { await sb.from('receipt_docs').delete().eq('id', rdoc.id); throw e2; }
     const { error: e3 } = await sb.rpc('fn_post_receipt_journal', { p_receipt_id: rdoc.id });
-    if (e3) throw e3;
+    if (e3) {
+      await sb.from('receipt_items').delete().eq('receipt_doc_id', rdoc.id);
+      await sb.from('receipt_docs').delete().eq('id', rdoc.id);
+      throw e3;
+    }
     await this.log('create_receipt', 'receipt_docs', rdoc.id, { doc_num: doc.doc_num, items: items.length });
     return rdoc;
   },
@@ -230,6 +234,18 @@ const DB = {
     const { data, error } = await sb.from('receipt_items').select('*, materials(store_num,name,unit)')
       .eq('receipt_doc_id', receiptId);
     if (error) throw error; return data;
+  },
+  // حذف نهائي لوثيقة استلام — يشترط إلغاءها أولاً (is_cancelled=true) لضمان عكس أثر المخزون/القيد
+  // قبل الحذف الفعلي، ويحرّر رقم المستند لإعادة استخدامه بمستند جديد.
+  async hardDeleteReceipt(id, docNum) {
+    const { data: doc, error: e0 } = await sb.from('receipt_docs').select('is_cancelled').eq('id', id).single();
+    if (e0) throw friendlyDbError(e0);
+    if (!doc.is_cancelled) throw new Error('يجب إلغاء الوثيقة أولاً قبل حذفها نهائياً');
+    const { error: e1 } = await sb.from('receipt_items').delete().eq('receipt_doc_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('receipt_docs').delete().eq('id', id);
+    if (e2) throw friendlyDbError(e2);
+    await this.log('hard_delete_receipt', 'receipt_docs', id, { doc_num: docNum });
   },
 
   // ── مرفقات وثائق الاستلام (Supabase Storage) ─────────────────────────────
@@ -287,6 +303,18 @@ const DB = {
     if (!includeCancelled) q = q.eq('is_cancelled', false);
     const { data, error } = await q;
     if (error) throw error; return data;
+  },
+  // حذف نهائي لوثيقة إصدار — يشترط إلغاءها أولاً (is_cancelled=true) لضمان عكس أثر المخزون/القيد
+  // قبل الحذف الفعلي، ويحرّر رقم المستند لإعادة استخدامه بمستند جديد.
+  async hardDeleteIssue(id, docNum) {
+    const { data: doc, error: e0 } = await sb.from('issue_docs').select('is_cancelled').eq('id', id).single();
+    if (e0) throw friendlyDbError(e0);
+    if (!doc.is_cancelled) throw new Error('يجب إلغاء الوثيقة أولاً قبل حذفها نهائياً');
+    const { error: e1 } = await sb.from('issue_items').delete().eq('issue_doc_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('issue_docs').delete().eq('id', id);
+    if (e2) throw friendlyDbError(e2);
+    await this.log('hard_delete_issue', 'issue_docs', id, { doc_num: docNum });
   },
   async getIssueById(id) {
     const { data, error } = await sb.from('issue_docs').select('*, warehouses(code,name)').eq('id', id).single();
@@ -973,6 +1001,23 @@ const DB = {
     const { data, error } = await sb.rpc('fn_integrity_check');
     if (error) throw friendlyDbError(error);
     return data;
+  },
+
+  // ── صلاحيات مفصّلة لكل مستخدم (تجاوز فوق الدور) ─────────────────────────────
+  async listUserPermissions(userId) {
+    const { data, error } = await sb.from('user_permissions').select('perm_key,allowed').eq('user_id', userId);
+    if (error) throw friendlyDbError(error);
+    return data || [];
+  },
+  async setUserPermission(userId, permKey, allowed) {
+    const { error } = await sb.from('user_permissions').upsert({ user_id: userId, perm_key: permKey, allowed }, { onConflict: 'user_id,perm_key' });
+    if (error) throw friendlyDbError(error);
+    await this.log('set_user_permission', 'user_permissions', userId, { perm_key: permKey, allowed });
+  },
+  async clearUserPermission(userId, permKey) {
+    const { error } = await sb.from('user_permissions').delete().eq('user_id', userId).eq('perm_key', permKey);
+    if (error) throw friendlyDbError(error);
+    await this.log('clear_user_permission', 'user_permissions', userId, { perm_key: permKey });
   },
 
   // ── سجل المراجعة ─────────────────────────────

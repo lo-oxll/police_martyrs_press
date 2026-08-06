@@ -42,7 +42,6 @@ PAGE_RENDER.users = async (root) => {
         <td>${u.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
         ${isAdmin ? `<td>
           <button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button>
-          <button class="btn btn-o btn-sm" onclick="openUserPermissionsMatrix('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">🔐 صلاحيات مفصّلة</button>
           ${u.id !== ME.id ? `<button class="btn btn-d btn-sm" onclick="hardDeleteUserConfirm('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">🗑 حذف نهائي</button>` : ''}
         </td>` : ''}
       </tr>`).join('')}
@@ -115,43 +114,6 @@ window.hardDeleteUserConfirm = async (id, name) => {
     toast('تم حذف المستخدم نهائياً', 's');
     go('users');
   } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
-};
-
-// صلاحيات مفصّلة لكل مستخدم: نعم/لا/افتراضي لكل صفحة × (دخول/إضافة/تعديل/حذف) — تجاوز فوق الدور
-window.openUserPermissionsMatrix = async (userId, userName) => {
-  const uperms = await DB.listUserPermissions(userId);
-  const allPages = PAGES.flatMap(sec => sec.items);
-  const map = {}; uperms.forEach(p => { map[p.perm_key] = p.allowed; });
-  const cellSelect = (key) => {
-    const v = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : 'default';
-    return `<select data-key="${key}" style="font-size:11px">
-      <option value="default" ${v==='default'?'selected':''}>افتراضي (حسب الدور)</option>
-      <option value="allow" ${v===true?'selected':''}>✅ مسموح</option>
-      <option value="deny" ${v===false?'selected':''}>❌ ممنوع</option>
-    </select>`;
-  };
-  const rowsHtml = allPages.map(p => {
-    const k = pagePermKeys(p.id);
-    return `<tr><td>${p.label}</td>
-      <td>${cellSelect(k.view)}</td><td>${cellSelect(k.create)}</td>
-      <td>${cellSelect(k.edit)}</td><td>${cellSelect(k.delete)}</td></tr>`;
-  }).join('');
-  showModal(`صلاحيات مفصّلة: ${userName}`, `
-    <div class="ph-sub" style="margin-bottom:10px">"افتراضي" = حسب دور المستخدم كالسابق. أي اختيار صريح هنا يتجاوز الدور لهذا المستخدم فقط، ولا يؤثر على بقية المستخدمين.</div>
-    <div class="itw" style="max-height:420px;overflow-y:auto"><table><thead><tr><th>الصفحة</th><th>دخول</th><th>إضافة</th><th>تعديل</th><th>حذف</th></tr></thead>
-    <tbody id="uperm-body">${rowsHtml}</tbody></table></div>
-  `, async () => {
-    const selects = document.querySelectorAll('#uperm-body select');
-    try {
-      for (const sel of selects) {
-        const key = sel.dataset.key, val = sel.value;
-        if (val === 'default') await DB.clearUserPermission(userId, key);
-        else await DB.setUserPermission(userId, key, val === 'allow');
-      }
-      toast('تم حفظ الصلاحيات المفصّلة', 's');
-      if (userId === ME.id) location.reload(); else go('users');
-    } catch (e) { toast('تعذر الحفظ: ' + e.message, 'e'); return false; }
-  });
 };
 
 // ── إعدادات حسابات فروقات الجرد الدوري (تُستخدم عند ترحيل قيد الجرد) ──────────────────────────────
@@ -277,6 +239,86 @@ function bindCountSettingsHandlers() {
   };
 }
 
+// ── قاموس ترجمة سجل المراجعة للعربية ─────────────────────────────
+const AUDIT_ACTION_LABELS = {
+  login: 'تسجيل دخول', logout: 'تسجيل خروج',
+  create_receipt: 'إنشاء وثيقة استلام', cancel_receipt: 'إلغاء وثيقة استلام', hard_delete_receipt: 'حذف نهائي لوثيقة استلام', upload_attachment: 'رفع مرفق',
+  create_issue: 'إنشاء وثيقة إصدار', cancel_issue: 'إلغاء وثيقة إصدار', hard_delete_issue: 'حذف نهائي لوثيقة إصدار',
+  create_stock_transfer: 'إنشاء تحويل مخزني', cancel_stock_transfer: 'إلغاء تحويل مخزني', delete_stock_transfer: 'حذف تحويل مخزني',
+  create_petty_cash_voucher: 'إنشاء سند سلفة مستديمة', cancel_petty_cash_voucher: 'إلغاء سند سلفة مستديمة', delete_petty_cash_voucher: 'حذف سند سلفة مستديمة', create_petty_cash_advance: 'إنشاء دفعة سلفة مستديمة', delete_petty_cash_advance: 'حذف دفعة سلفة مستديمة',
+  create_payment: 'إنشاء سند صرف', create_receipt_voucher: 'إنشاء سند قبض', delete_cash_transaction: 'حذف حركة صندوق',
+  cash_reconciliation: 'تسوية/مطابقة صندوق', delete_cash_reconciliation: 'حذف تسوية صندوق',
+  post_journal: 'ترحيل قيد محاسبي', delete_journal_entry: 'حذف قيد محاسبي', request_journal_approval: 'طلب موافقة على قيد', approve_journal_entry: 'الموافقة على قيد', reject_journal_entry: 'رفض قيد',
+  create_debt_note: 'إصدار سند دين', settle_debt_note: 'تسوية سند دين', cancel_debt_note: 'إلغاء سند دين', hard_delete_debt_note: 'حذف نهائي لسند دين',
+  create_order: 'إنشاء طلبية', delete_order: 'حذف طلبية', update_order_status: 'تحديث حالة طلبية',
+  create_shipping_receipt: 'إنشاء إيصال شحن', delete_shipping_receipt: 'حذف إيصال شحن', update_shipping_receipt: 'تحديث إيصال شحن',
+  create_manufacturing_order: 'إنشاء طلبية تصنيع', cancel_manufacturing_order: 'إلغاء طلبية تصنيع', complete_manufacturing_order: 'إتمام طلبية تصنيع', create_manufacturing_model: 'إنشاء موديل تصنيع', deactivate_manufacturing_model: 'إلغاء تفعيل موديل تصنيع',
+  create_physical_count: 'إنشاء جرد دوري', post_physical_count: 'ترحيل قيد الجرد', delete_physical_count: 'حذف جرد دوري',
+  bulk_create_materials: 'توليد بطاقات مواد جماعياً', delete_material: 'حذف مادة', delete_material_stock: 'حذف رصيد مادة', set_material_barcode: 'تعيين باركود مادة',
+  create_material_category: 'إنشاء صنف رئيسي', update_material_category: 'تعديل صنف رئيسي', deactivate_material_category: 'إلغاء تفعيل صنف رئيسي',
+  create_similarity_group: 'إنشاء مجموعة تشابه مواد', delete_similarity_group: 'حذف مجموعة تشابه مواد',
+  create_region: 'إنشاء منطقة', delete_region: 'حذف منطقة', create_street: 'إضافة شارع', delete_street: 'حذف شارع',
+  create_supplier: 'إضافة مورّد', update_supplier: 'تعديل مورّد', delete_supplier: 'حذف مورّد',
+  create_customer: 'إضافة زبون', update_customer: 'تعديل زبون', deactivate_customer: 'إلغاء تفعيل زبون', hard_delete_customer: 'حذف نهائي لزبون',
+  create_warehouse: 'إضافة مخزن', update_warehouse: 'تعديل مخزن', delete_warehouse: 'حذف مخزن', hard_delete_warehouse: 'حذف نهائي لمخزن',
+  create_branch: 'إضافة فرع', update_branch: 'تعديل فرع', deactivate_branch: 'إلغاء تفعيل فرع', hard_delete_branch: 'حذف نهائي لفرع',
+  create_project: 'إضافة مشروع', update_project: 'تعديل مشروع', deactivate_project: 'إلغاء تفعيل مشروع', hard_delete_project: 'حذف نهائي لمشروع',
+  create_cost_center: 'إضافة مركز كلفة', deactivate_cost_center: 'إلغاء تفعيل مركز كلفة',
+  create_employee: 'إضافة موظف', update_employee: 'تعديل موظف', delete_employee: 'حذف موظف',
+  create_employee_loan: 'إنشاء سلفة موظف', close_employee_loan: 'إغلاق سلفة موظف', delete_employee_loan: 'حذف سلفة موظف',
+  create_payroll_run: 'إنشاء دورة رواتب', post_payroll_run: 'ترحيل دورة رواتب', delete_payroll_run: 'حذف دورة رواتب',
+  create_fixed_asset: 'إضافة أصل ثابت', delete_fixed_asset: 'حذف أصل ثابت', dispose_fixed_asset: 'استبعاد أصل ثابت', post_depreciation: 'ترحيل قيد إهلاك', delete_depreciation_run: 'حذف دورة إهلاك',
+  create_contract: 'إنشاء عقد', update_contract: 'تعديل عقد', delete_contract: 'حذف عقد',
+  create_archive_card: 'إنشاء بطاقة أرشيف', delete_archive_card: 'حذف بطاقة أرشيف',
+  create_rental_item: 'إضافة عنصر تأجير', delete_rental_item: 'حذف عنصر تأجير', update_rental_status: 'تحديث حالة تأجير',
+  create_task: 'إنشاء مهمة', delete_task: 'حذف مهمة', update_task_status: 'تحديث حالة مهمة',
+  send_internal_message: 'إرسال رسالة داخلية',
+  create_invoice_template: 'إنشاء قالب فاتورة', delete_invoice_template: 'حذف قالب فاتورة',
+  import_chart_of_accounts: 'استيراد دليل الحسابات', delete_account: 'حذف حساب', force_delete_account: 'حذف إجباري لحساب',
+  import_opening_balances: 'استيراد أرصدة افتتاحية', close_fiscal_year: 'إغلاق سنة مالية', delete_fiscal_year: 'حذف سنة مالية', rollover_budget: 'ترحيل موازنة لسنة جديدة',
+  allocate_indirect_expense: 'توزيع مصروف غير مباشر', restore_reference_table: 'استعادة جدول من نسخة احتياطية',
+  update_app_settings: 'تحديث إعدادات النظام', set_page_permission: 'تعيين صلاحية صفحة', reset_page_permission: 'إعادة صلاحية صفحة للافتراضي',
+  set_user_permission: 'تعيين صلاحية مفصّلة لمستخدم', clear_user_permission: 'إزالة صلاحية مفصّلة لمستخدم',
+  approve_user: 'الموافقة على حساب مستخدم', reject_user: 'رفض حساب مستخدم', activate_user: 'تفعيل مستخدم', deactivate_user: 'إيقاف مستخدم', change_role: 'تغيير دور مستخدم', hard_delete_user: 'حذف نهائي لمستخدم', update_profile_scope: 'تعديل نطاق صلاحيات محاسب',
+  auto_create_material: 'تعريف مادة تلقائياً أثناء الإدخال',
+};
+const AUDIT_ENTITY_LABELS = {
+  auth: 'الدخول والخروج', receipt_docs: 'وثائق الاستلام', issue_docs: 'وثائق الإصدار', stock_transfers: 'التحويلات المخزنية',
+  petty_cash_vouchers: 'سندات السلفة المستديمة', petty_cash_advances: 'دفعات السلفة المستديمة', cash_transactions: 'حركات الصندوق', cash_reconciliations: 'تسويات الصندوق',
+  journal_entries: 'القيود المحاسبية', pending_journal_entries: 'القيود بانتظار الموافقة', chart_of_accounts: 'دليل الحسابات', opening_balances: 'الأرصدة الافتتاحية',
+  debt_notes: 'سندات الديون', sales_purchase_orders: 'الطلبيات', shipping_receipts: 'إيصالات الشحن',
+  manufacturing_orders: 'طلبيات التصنيع', manufacturing_models: 'موديلات التصنيع', physical_counts: 'الجرد الدوري',
+  materials: 'المواد', material_stock: 'أرصدة المواد', material_categories: 'الأصناف الرئيسية', material_similarity_groups: 'مجموعات تشابه المواد',
+  regions: 'المناطق', streets: 'الشوارع', suppliers: 'الموردون', customers: 'الزبائن',
+  warehouses: 'المخازن', branches: 'الفروع', projects: 'المشاريع', cost_centers: 'مراكز الكلفة',
+  employees: 'الموظفون', employee_loans: 'سلف الموظفين', payroll_runs: 'دورات الرواتب',
+  fixed_assets: 'الأصول الثابتة', depreciation_runs: 'دورات الإهلاك',
+  contracts: 'العقود', archive_cards: 'بطاقات الأرشيف', rental_items: 'عناصر التأجير', tasks: 'المهام', internal_messages: 'الرسائل الداخلية',
+  invoice_templates: 'قوالب الفواتير', fiscal_years: 'السنوات المالية', budgets: 'الموازنات', indirect_expense_allocations: 'توزيع المصاريف غير المباشرة',
+  app_settings: 'إعدادات النظام', page_permissions: 'صلاحيات الصفحات', user_permissions: 'الصلاحيات المفصّلة للمستخدمين', profiles: 'المستخدمون',
+};
+function auditActionLabel(a) { return AUDIT_ACTION_LABELS[a] || a; }
+function auditEntityLabel(e) { return AUDIT_ENTITY_LABELS[e] || e; }
+// يحوّل تفاصيل السجل (details JSON) لجملة عربية مقروءة بدل عرض JSON خام
+function auditDetailsText(action, details) {
+  const d = details || {};
+  const parts = [];
+  if (d.doc_num) parts.push(`رقم المستند: ${d.doc_num}`);
+  if (d.entry_no) parts.push(`رقم القيد: ${d.entry_no}`);
+  if (d.email) parts.push(`البريد: ${d.email}`);
+  if (d.amount !== undefined) parts.push(`المبلغ: ${fmtIQD(d.amount)}`);
+  if (d.diff !== undefined) parts.push(`الفرق: ${fmtIQD(d.diff)}`);
+  if (d.doc_kind) parts.push(`النوع: ${d.doc_kind === 'voucher' ? 'سند' : d.doc_kind}`);
+  if (d.reason) parts.push(`السبب: ${d.reason}`);
+  else if ('reason' in d) parts.push('السبب: (بدون سبب مكتوب)');
+  if (d.items !== undefined) parts.push(`عدد الأصناف: ${d.items}`);
+  if (d.ok !== undefined || d.fail !== undefined) parts.push(`نجح: ${d.ok||0} / فشل: ${d.fail||0}`);
+  if (d.old && d.new) parts.push(`من "${JSON.stringify(d.old)}" إلى "${JSON.stringify(d.new)}"`);
+  if (d.perm_key) parts.push(`المفتاح: ${d.perm_key}${d.allowed!==undefined ? ' — ' + (d.allowed?'مسموح':'ممنوع') : ''}`);
+  if (parts.length) return parts.join(' | ');
+  return Object.keys(d).length ? JSON.stringify(d) : '—';
+}
+
 PAGE_RENDER.auditlog = async (root) => {
   if (!can('admin','manager')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const logs = await DB.auditLog(150);
@@ -285,13 +327,13 @@ PAGE_RENDER.auditlog = async (root) => {
       <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="exportAuditLogExcel()">⬇ تصدير إكسل</button></div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>الوقت</th><th>المستخدم</th><th>العملية</th><th>الكيان</th><th>تفاصيل</th></tr></thead><tbody>
       ${logs.map(l => `<tr><td class="mono">${new Date(l.created_at).toLocaleString('ar-IQ')}</td><td>${l.profiles?.full_name || '—'}</td>
-        <td><span class="chip">${l.action}</span></td><td>${l.entity}</td><td class="mono" style="font-size:11px">${JSON.stringify(l.details||{})}</td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد سجلات بعد</td></tr>'}
+        <td><span class="chip">${auditActionLabel(l.action)}</span></td><td>${auditEntityLabel(l.entity)}</td><td style="font-size:12px">${auditDetailsText(l.action, l.details)}</td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد سجلات بعد</td></tr>'}
     </tbody></table></div></div>`;
 };
 window.exportAuditLogExcel = async () => {
   const logs = await DB.auditLog(2000);
   exportRowsToExcel(
-    logs.map((l,i) => ({ 'م': i+1, 'الوقت': new Date(l.created_at).toLocaleString('ar-IQ'), 'المستخدم': l.profiles?.full_name || '—', 'العملية': l.action, 'الكيان': l.entity, 'تفاصيل': JSON.stringify(l.details||{}) })),
+    logs.map((l,i) => ({ 'م': i+1, 'الوقت': new Date(l.created_at).toLocaleString('ar-IQ'), 'المستخدم': l.profiles?.full_name || '—', 'العملية': auditActionLabel(l.action), 'الكيان': auditEntityLabel(l.entity), 'تفاصيل': auditDetailsText(l.action, l.details) })),
     'سجل المراجعة', `سجل_المراجعة_${todayISO()}.xlsx`
   );
 };
