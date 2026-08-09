@@ -152,6 +152,32 @@ const DB = {
     await this.log('delete_material_stock', 'material_stock', materialId, { warehouse_id: warehouseId });
   },
 
+  // ── الاستعلام عن مادة: بطاقة سريعة لمادة واحدة عبر كل المخازن (الرصيد الحالي بكل مخزن +
+  // آخر حركات استلام/إصدار خلال الأشهر الماضية) — لا يحتاج اختيار مخزن أو فترة مسبقاً، بعكس
+  // "كشف حركة مادة" الذي يتطلب مخزناً وفترة محدَّدة. ─────────────────────────────
+  async materialInquiry(materialId, months = 12) {
+    const since = new Date(); since.setMonth(since.getMonth() - months);
+    const sinceISO = since.toISOString().slice(0, 10);
+    const [mat, stock, rec, iss] = await Promise.all([
+      sb.from('materials').select('*').eq('id', materialId).single(),
+      sb.from('material_stock').select('qty_on_hand, avg_price, warehouses(id,code,name)').eq('material_id', materialId),
+      sb.from('receipt_items').select('qty, unit_price, receipt_docs!inner(doc_num, doc_date, is_cancelled, warehouses(name))')
+        .eq('material_id', materialId).eq('receipt_docs.is_cancelled', false).gte('receipt_docs.doc_date', sinceISO),
+      sb.from('issue_items').select('qty, unit_price, issue_docs!inner(doc_num, doc_date, is_cancelled, warehouses(name))')
+        .eq('material_id', materialId).eq('issue_docs.is_cancelled', false).gte('issue_docs.doc_date', sinceISO),
+    ]);
+    if (mat.error) throw mat.error;
+    if (stock.error) throw stock.error;
+    if (rec.error) throw rec.error;
+    if (iss.error) throw iss.error;
+    const movements = [
+      ...(rec.data || []).map(r => ({ date: r.receipt_docs.doc_date, doc_num: r.receipt_docs.doc_num, warehouse: r.receipt_docs.warehouses?.name || '—', type: 'استلام', qty: Number(r.qty), unit_price: Number(r.unit_price || 0) })),
+      ...(iss.data || []).map(r => ({ date: r.issue_docs.doc_date, doc_num: r.issue_docs.doc_num, warehouse: r.issue_docs.warehouses?.name || '—', type: 'إصدار', qty: -Number(r.qty), unit_price: Number(r.unit_price || 0) })),
+    ].sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0).slice(0, 15);
+    const totalQty = (stock.data || []).reduce((s, r) => s + Number(r.qty_on_hand || 0), 0);
+    return { material: mat.data, stock: stock.data || [], movements, totalQty };
+  },
+
   // ── استيراد أرصدة التدوير (الافتتاحية) حسب المخزن ─────────────────────────────
   // rows: [{ store_num, qty, unit_price }] — يُحدَّث رصيد material_stock فوراً + يُسجَّل بجدول opening_balances لهذه السنة
   // يستورد أرصدة افتتاحية بمطابقة اسم المادة (وليس الرقم المخزني). المادة غير الموجودة بدليل المواد

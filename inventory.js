@@ -212,6 +212,7 @@ function renderMaterialsPage(root, st) {
     <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">${st.items.length} مادة محمّلة${st.hasMore ? ' — يوجد المزيد' : ''}</div></div>
       <div class="ph-actions">
         <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${st.term}">
+        <button class="btn btn-o btn-sm" onclick="window.__matInquiryPreset=null;go('materialinquiry')">🔎 الاستعلام عن مادة</button>
         <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل (الكل)</button>
         <button class="btn btn-o btn-sm" onclick="document.getElementById('mat-xls-panel').classList.toggle('hidden')">⬆ استيراد إكسل</button>
         <button class="btn btn-p" onclick="openMatModal()">+ مادة جديدة</button>
@@ -219,7 +220,8 @@ function renderMaterialsPage(root, st) {
     <div id="mat-xls-panel" class="hidden" style="margin-bottom:16px">${renderMaterialsExcelImportCard('mat-xls')}</div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
       ${st.items.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
-        <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button>
+        <td><button class="btn btn-o btn-sm" onclick="goMaterialInquiry('${m.id}')">🔎 استعلام</button>
+        <button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button>
         ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteMaterialConfirm('${m.id}','${(m.store_num||'').replace(/'/g,"\\'")}','${(m.name||'').replace(/'/g,"\\'")}')">حذف</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد نتائج</td></tr>'}
     </tbody></table></div>
@@ -274,6 +276,53 @@ window.deleteMaterialConfirm = async (id, storeNum, name) => {
     go('materials');
   } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
+
+// ── الاستعلام عن مادة ──────────────────────────────
+// بحث سريع عن مادة واحدة + رصيدها الحالي بكل مخزن + آخر ١٥ حركة استلام/إصدار
+// (بعكس "كشف حركة مادة" بالتقارير المستودعية، هذا استعلام سريع بلا اختيار مخزن أو فترة)
+window.goMaterialInquiry = (materialId) => { window.__matInquiryPreset = materialId; go('materialinquiry'); };
+PAGE_RENDER.materialinquiry = async (root) => {
+  const preset = window.__matInquiryPreset || null;
+  window.__matInquiryPreset = null;
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">🔎 الاستعلام عن مادة</div><div class="ph-sub">ابحث عن مادة لعرض رصيدها الحالي بكل مخزن وآخر حركاتها (آخر ١٢ شهر)</div></div></div>
+    <div class="card">
+      <div class="ac-wrap" style="max-width:420px"><input id="mi-search" placeholder="ابحث بالرقم المخزني أو الاسم..." autocomplete="off"><div class="ac-portal" id="mi-portal"></div></div>
+    </div>
+    <div id="mi-result"></div>`;
+  const input = document.getElementById('mi-search'), portal = document.getElementById('mi-portal');
+  bindAutocomplete(input, portal, async term => term ? DB.listMaterials(term, 10) : [], async (m) => {
+    input.value = `${m.store_num} — ${m.name}`;
+    await renderMaterialInquiryResult(m.id);
+  }, (m) => `<div class="ac-item"><span class="ac-code">${m.store_num}</span><span>${m.name}</span></div>`);
+  if (preset) {
+    input.value = 'جارِ التحميل...';
+    await renderMaterialInquiryResult(preset, input);
+  }
+};
+async function renderMaterialInquiryResult(materialId, inputEl = null) {
+  const box = document.getElementById('mi-result');
+  box.innerHTML = '<div class="card"><div class="ec">جارِ التحميل...</div></div>';
+  try {
+    const r = await DB.materialInquiry(materialId);
+    const m = r.material;
+    if (inputEl) inputEl.value = `${m.store_num} — ${m.name}`;
+    box.innerHTML = `
+      <div class="stats">
+        <div class="stat"><div class="stat-lbl">الرقم المخزني</div><div class="stat-val mono">${m.store_num}</div></div>
+        <div class="stat"><div class="stat-lbl">الوحدة</div><div class="stat-val">${m.unit}</div></div>
+        <div class="stat"><div class="stat-lbl">التصنيف</div><div class="stat-val">${m.category || '—'}</div></div>
+        <div class="stat ${r.totalQty <= Number(m.min_qty || 0) ? 'danger' : ''}"><div class="stat-lbl">إجمالي الرصيد (كل المخازن)</div><div class="stat-val ${r.totalQty <= Number(m.min_qty || 0) ? 'danger' : ''}">${fmtQty(r.totalQty)}</div></div>
+      </div>
+      <div class="card"><div class="card-title">🏬 الرصيد حسب المخزن</div><div class="itw"><table><thead><tr><th>المخزن</th><th>الرصيد</th><th>السعر الوسطي</th><th>القيمة</th></tr></thead><tbody>
+        ${r.stock.length ? r.stock.map(s => `<tr><td>${s.warehouses?.name || '—'}</td><td class="mono">${fmtQty(s.qty_on_hand)}</td><td class="mono">${fmt(s.avg_price)}</td><td class="mono gold-txt">${fmtIQD(Number(s.qty_on_hand||0) * Number(s.avg_price||0))}</td></tr>`).join('') : '<tr><td colspan="4" class="ec">لا يوجد رصيد مسجَّل لهذه المادة بأي مخزن بعد</td></tr>'}
+      </tbody></table></div></div>
+      <div class="card"><div class="card-title">🕓 آخر الحركات (استلام/إصدار — آخر ١٢ شهر)</div><div class="itw"><table><thead><tr><th>التاريخ</th><th>الوثيقة</th><th>النوع</th><th>المخزن</th><th>الكمية</th><th>السعر</th></tr></thead><tbody>
+        ${r.movements.length ? r.movements.map(mv => `<tr><td class="mono">${mv.date}</td><td class="doc-num">${mv.doc_num}</td><td>${mv.type==='استلام'?'<span class="chip chip-ok">استلام</span>':'<span class="chip chip-danger">إصدار</span>'}</td><td>${mv.warehouse}</td><td class="mono">${mv.qty>=0?'+':''}${fmtQty(mv.qty)}</td><td class="mono">${fmt(mv.unit_price)}</td></tr>`).join('') : '<tr><td colspan="6" class="ec">لا توجد حركات مسجَّلة خلال آخر ١٢ شهر</td></tr>'}
+      </tbody></table></div>
+      <div class="ph-sub" style="margin-top:8px">لعرض كامل السجل التاريخي بمخزن وفترة محدَّدة، استخدم "كشف حركة مادة" من قائمة التقارير المستودعية.</div></div>`;
+  } catch (e) { box.innerHTML = `<div class="card"><div class="ec" style="color:var(--danger)">تعذر جلب بيانات الاستعلام: ${e.message}</div></div>`; }
+}
 
 // ── مكوّن عام: صفوف مواد لوثيقة استلام/إصدار ──────────────────────────────
 function itemRowHTML(prefix, isReceive) {
