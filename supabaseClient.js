@@ -654,8 +654,20 @@ const DB = {
 
   // ── تغذية السلفة المستديمة (Petty Cash Advances) ─────────────────────────────
   async listPettyCashAdvances(limit = 200) {
-    const { data, error } = await sb.from('petty_cash_advances').select('*, chart_of_accounts(code,name), profiles(full_name)').order('advance_date', { ascending: false }).limit(limit);
-    if (error) throw error; return data;
+    const { data, error } = await sb.from('petty_cash_advances').select('*, chart_of_accounts(code,name)').order('advance_date', { ascending: false }).limit(limit);
+    if (error) throw error;
+    // لا يوجد Foreign Key معرَّف بقاعدة البيانات بين petty_cash_advances.created_by و profiles،
+    // لذا لا يمكن الاعتماد على join تلقائي بـ PostgREST (يفشل بخطأ "Could not find a relationship").
+    // نجلب أسماء المستخدمين بطلب منفصل ونربطها يدوياً بدل ذلك.
+    const userIds = [...new Set((data || []).map(r => r.created_by).filter(Boolean))];
+    if (userIds.length) {
+      const { data: users, error: eU } = await sb.from('profiles').select('id, full_name').in('id', userIds);
+      if (!eU && users) {
+        const byId = Object.fromEntries(users.map(u => [u.id, u.full_name]));
+        data.forEach(r => { r.profiles = { full_name: byId[r.created_by] || null }; });
+      }
+    }
+    return data;
   },
   // رصيد صندوق السلفة المستديمة الحالي = مجموع التغذيات - مجموع سندات الصرف غير الملغاة
   async pettyCashFundBalance() {
